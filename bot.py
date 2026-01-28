@@ -18,6 +18,12 @@ auction_id_counter = 1
 # Durata asta in secondi (24h = 86400)
 AUCTION_DURATION = 24 * 3600
 
+# ===== ADMIN =====
+ADMINS = ["tuo_username"]  # sostituisci con i tuoi admin
+def is_admin(username: str):
+    return username in ADMINS
+
+
 # ===== /START =====
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
@@ -30,12 +36,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-# ===== FUNZIONE ADMIN =====
-ADMINS = ["tuo_username"]  # sostituisci con i tuoi admin
-def is_admin(username: str):
-    return username in ADMINS
-
-
 # ===== GESTIONE MESSAGGI =====
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global auction_id_counter
@@ -43,6 +43,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text or update.message.caption or ""
     text = text.strip()
     user = update.message.from_user.username or update.message.from_user.first_name
+    chat_id = update.message.chat_id
 
     # ---------- VENDITA ----------
     if text.startswith("#vendita"):
@@ -67,10 +68,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "description": description,
             "price": 0,
             "winner": None,
-            "active": False,
+            "active": False,  # parte alla prima offerta
             "photo": photo_file_id,
             "base_price": base_price,
             "start_time": None,
+            "offerers": {},  # username -> chat_id per notifiche
         }
 
         msg = f"📣 NUOVO OGGETTO IN VENDITA\nID: {auction_id}\n{description}\nPrezzo base: {base_price}€\n💰 L’asta partirà alla prima offerta"
@@ -101,17 +103,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # ---------- ATTIVA ASTA ALLA PRIMA OFFERTA ----------
         if not auction["active"]:
             if offer < auction["base_price"]:
-                await update.message.reply_text(
-                    f"❌ Offerta troppo bassa. Prezzo base: {auction['base_price']}€"
-                )
+                await update.message.reply_text(f"❌ Offerta troppo bassa. Prezzo base: {auction['base_price']}€")
                 return
             auction["active"] = True
             auction["start_time"] = time.time()
             auction["price"] = offer
             auction["winner"] = user
-            await update.message.reply_text(
-                f"🏁 ASTA AVVIATA!\nID: {auction_id}\n{user} → {offer}€"
-            )
+            auction["offerers"][user] = chat_id
+            await update.message.reply_text(f"🏁 ASTA AVVIATA!\nID: {auction_id}\n{user} → {offer}€")
             return
 
         # ---------- OFFERTA ASTA ATTIVA ----------
@@ -128,20 +127,22 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-        # ---------- NOTIFICA AL VECCHIO OFFERENTE ----------
-        old_winner = auction["winner"]
-        if old_winner and old_winner != user:
-            try:
-                # invio solo se abbiamo username valido
-                await context.bot.send_message(
-                    chat_id=f"@{old_winner}",
-                    text=f"⚠️ La tua offerta per '{auction['description']}' è stata superata da {user} ({offer}€)"
-                )
-            except:
-                pass  # ignora errori se username non valido
+        # ---------- NOTIFICA OFFERENTE PRECEDENTE ----------
+        prev_winner = auction["winner"]
+        if prev_winner and prev_winner != user:
+            prev_chat_id = auction["offerers"].get(prev_winner)
+            if prev_chat_id:
+                try:
+                    await context.bot.send_message(
+                        chat_id=prev_chat_id,
+                        text=f"⚠️ La tua offerta per ID {auction_id} è stata superata da {user} con {offer}€"
+                    )
+                except:
+                    pass  # Ignora se non riesce a inviare privato
 
         auction["price"] = offer
         auction["winner"] = user
+        auction["offerers"][user] = chat_id
 
         await update.message.reply_text(f"🔥 NUOVA OFFERTA!\nID: {auction_id}\n{user} → {offer}€")
 
@@ -185,16 +186,9 @@ async def shop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = ""
     now = time.time()
     for aid, a in auctions.items():
-        status = ""
-        if a["active"]:
-            if (now - a["start_time"]) >= AUCTION_DURATION:
-                a["active"] = False
-                status = "⏰ ASTA CHIUSA"
-            else:
-                status = "⚡ ASTA ATTIVA"
-        else:
-            status = "🛒 IN VENDITA"
-
+        if a["active"] and (now - a["start_time"]) >= AUCTION_DURATION:
+            a["active"] = False
+        status = "⚡ ASTA ATTIVA" if a["active"] else "🛒 IN VENDITA"
         price = f"{a['price']}€" if a["price"] > 0 else f"Base: {a['base_price']}€"
         msg += f"ID {aid} - {a['description']}\nPrezzo: {price}\nStato: {status}\n\n"
 
@@ -206,11 +200,9 @@ async def shop(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ===== AVVIO BOT =====
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
-
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("shop", shop))
     app.add_handler(MessageHandler(filters.TEXT | filters.PHOTO, handle_message))
-
     app.run_polling()
 
 
