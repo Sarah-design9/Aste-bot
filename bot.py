@@ -10,15 +10,16 @@ import os
 
 TOKEN = os.environ.get("TOKEN")
 
-# ====== STRUTTURA DATI ======
-auctions = {}  # id -> dict
+# ====== DATI ASTE ======
+auctions = {}  # id -> dati asta
 auction_id_counter = 1
 
 
+# ====== START ======
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🤖 Bot aste attivo!\n\n"
-        "Usa:\n"
+        "Comandi:\n"
         "#vendita Nome - Prezzo\n"
         "#offerta ID prezzo\n"
         "#chiudi ID\n"
@@ -34,9 +35,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = text.strip()
     user = update.message.from_user.first_name
 
-    # -------- VENDITA --------
+    # ---------- VENDITA ----------
     if text.startswith("#vendita"):
         description = text[len("#vendita"):].strip()
+
         auction_id = auction_id_counter
         auction_id_counter += 1
 
@@ -47,16 +49,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "active": True,
         }
 
-        msg = (
+        await update.message.reply_text(
             f"🆕 OGGETTO #{auction_id}\n"
             f"{description}\n\n"
             f"💰 Offerte aperte!\n"
             f"Scrivi: #offerta {auction_id} prezzo"
         )
 
-        await update.message.reply_text(msg)
-
-    # -------- OFFERTA --------
+    # ---------- OFFERTA ----------
     elif text.startswith("#offerta"):
         parts = text.split()
 
@@ -76,19 +76,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         auction = auctions.get(auction_id)
 
         if not auction or not auction["active"]:
-            await update.message.reply_text("❌ Asta non trovata o chiusa.")
+            await update.message.reply_text("❌ Asta non trovata o già chiusa.")
             return
 
         if offer <= auction["price"]:
-    winner = auction["winner"] or "Nessuno"
-    await update.message.reply_text(
-        f"❌ OFFERTA RIFIUTATA\n\n"
-        f"🆔 Oggetto #{auction_id}\n"
-        f"💶 Offerta proposta: {offer}€\n"
-        f"📈 Prezzo attuale: {auction['price']}€\n"
-        f"👤 Miglior offerente: {winner}"
-    )
-    return
+            winner = auction["winner"] or "Nessuno"
+            await update.message.reply_text(
+                f"❌ OFFERTA RIFIUTATA\n\n"
+                f"🆔 Oggetto #{auction_id}\n"
+                f"💶 Offerta proposta: {offer}€\n"
+                f"📈 Prezzo attuale: {auction['price']}€\n"
+                f"👤 Miglior offerente: {winner}"
+            )
+            return
 
         auction["price"] = offer
         auction["winner"] = user
@@ -100,7 +100,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"💶 {offer}€"
         )
 
-    # -------- CHIUSURA --------
+    # ---------- CHIUSURA ----------
     elif text.startswith("#chiudi"):
         parts = text.split()
 
@@ -135,33 +135,36 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"🏁 ASTA CHIUSA\n\n"
                 f"🆔 Oggetto #{auction_id}\n"
                 f"{auction['description']}\n"
-                f"❌ Nessuna offerta."
+                f"❌ Nessuna offerta ricevuta."
             )
 
 
 # ====== SHOP ======
 async def shop(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    active = [
-        (aid, a)
-        for aid, a in auctions.items()
-        if a["active"]
+    active_auctions = [
+        (aid, a) for aid, a in auctions.items() if a["active"]
     ]
 
-    if not active:
+    if not active_auctions:
         await update.message.reply_text("🛍️ Nessun oggetto in vendita.")
         return
 
     message = "🛍️ OGGETTI IN VENDITA\n\n"
 
-    for aid, a in active:
-        price = a["price"] if a["price"] > 0 else "Nessuna offerta"
-        message += f"🆔 #{aid} — {a['description']}\n💶 {price}\n\n"
+    for aid, a in active_auctions:
+        price = f"{a['price']}€" if a["price"] > 0 else "Nessuna offerta"
+        message += (
+            f"🆔 #{aid}\n"
+            f"{a['description']}\n"
+            f"💶 {price}\n\n"
+        )
 
     message += "📌 Per offrire:\n#offerta ID prezzo"
 
     await update.message.reply_text(message)
 
 
+# ====== AVVIO ======
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
