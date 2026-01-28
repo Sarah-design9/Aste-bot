@@ -15,9 +15,6 @@ TOKEN = os.environ.get("TOKEN")
 auctions = {}  # id -> dati asta
 auction_id_counter = 1
 
-# Lista username admin (Telegram username senza @)
-ADMINS = ["tuo_username"]  # sostituisci con i tuoi admin reali
-
 # Durata asta in secondi (24h = 86400)
 AUCTION_DURATION = 24 * 3600
 
@@ -27,32 +24,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🤖 BOT ASTE ATTIVO!\n\n"
         "Comandi:\n"
-        "#vendita descrizione (solo admin, puoi aggiungere foto)\n"
+        "#vendita descrizione prezzo_base (base per asta)\n"
         "#offerta ID prezzo\n"
         "#chiudi ID (solo admin)\n"
         "/shop"
     )
 
 
-# ===== FUNZIONE DI CONTROLLO ADMIN =====
-def is_admin(username: str):
-    return username in ADMINS
-
-
-# ===== FUNZIONE CHIUSURA AUTOMATICA =====
-def check_auction_timeout():
-    now = time.time()
-    for aid, auction in list(auctions.items()):
-        if auction["active"] and (now - auction["start_time"]) >= AUCTION_DURATION:
-            auction["active"] = False
-
-
 # ===== GESTIONE MESSAGGI =====
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global auction_id_counter
-
-    # Controllo chiusura aste scadute
-    check_auction_timeout()
 
     text = update.message.text or update.message.caption or ""
     text = text.strip()
@@ -60,11 +41,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ---------- VENDITA ----------
     if text.startswith("#vendita"):
-        if not is_admin(user):
-            await update.message.reply_text("❌ Solo gli admin possono aprire aste")
+        parts = text.split(maxsplit=2)
+        if len(parts) < 3:
+            await update.message.reply_text("❌ Formato corretto: #vendita descrizione prezzo_base")
             return
 
-        description = text.replace("#vendita", "").strip()
+        description = parts[1]
+        try:
+            base_price = int(parts[2])
+        except ValueError:
+            await update.message.reply_text("❌ Prezzo base non valido")
+            return
+
         auction_id = auction_id_counter
         auction_id_counter += 1
 
@@ -74,16 +62,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "description": description,
             "price": 0,
             "winner": None,
-            "active": True,
+            "active": False,  # parte alla prima offerta
             "photo": photo_file_id,
-            "start_time": time.time()
+            "base_price": base_price,
+            "start_time": None
         }
 
-        msg = (
-            f"📣 NUOVO OGGETTO\nID: {auction_id}\n{description}\n"
-            f"💰 Offerte aperte per 24h!\nScrivi: #offerta {auction_id} prezzo"
-        )
-
+        msg = f"📣 NUOVO OGGETTO IN VENDITA\nID: {auction_id}\n{description}\nPrezzo base: {base_price}€\n💰 L’asta partirà alla prima offerta"
         if photo_file_id:
             await update.message.reply_photo(photo=photo_file_id, caption=msg)
         else:
@@ -108,18 +93,29 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Asta non trovata")
             return
 
-        # Controllo se asta è chiusa
+        # ---------- ATTIVA ASTA ALLA PRIMA OFFERTA ----------
         if not auction["active"]:
-            await update.message.reply_text("❌ Asta chiusa, non puoi offrire")
+            if offer < auction["base_price"]:
+                await update.message.reply_text(
+                    f"❌ Offerta troppo bassa. Prezzo base: {auction['base_price']}€"
+                )
+                return
+            auction["active"] = True
+            auction["start_time"] = time.time()
+            auction["price"] = offer
+            auction["winner"] = user
+            await update.message.reply_text(
+                f"🏁 ASTA AVVIATA!\nID: {auction_id}\n{user} → {offer}€"
+            )
             return
 
-        # Controllo durata 24h
-        if (time.time() - auction["start_time"]) >= AUCTION_DURATION:
+        # ---------- OFFERTA ASTA ATTIVA ----------
+        if not auction["active"] or (time.time() - auction["start_time"]) >= AUCTION_DURATION:
             auction["active"] = False
             await update.message.reply_text("❌ Asta chiusa, fuori tempo")
             return
 
-        min_offer = auction["price"] + 1  # incremento minimo +1€
+        min_offer = auction["price"] + 1
         if offer < min_offer:
             winner = auction["winner"] or "Nessuno"
             await update.message.reply_text(
@@ -130,9 +126,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         auction["price"] = offer
         auction["winner"] = user
 
-        await update.message.reply_text(
-            f"🔥 NUOVA OFFERTA!\nID: {auction_id}\n{user} → {offer}€"
-        )
+        await update.message.reply_text(f"🔥 NUOVA OFFERTA!\nID: {auction_id}\n{user} → {offer}€")
 
     # ---------- CHIUSURA MANUALE ----------
     elif text.startswith("#chiudi"):
@@ -157,7 +151,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         auction["active"] = False
-
         msg = f"🏁 ASTA CHIUSA\nID: {auction_id}\n{auction['description']}\n"
         if auction["winner"]:
             msg += f"Vincitore: {auction['winner']}\nPrezzo finale: {auction['price']}€"
@@ -172,20 +165,31 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ===== /SHOP =====
 async def shop(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    check_auction_timeout()
-    active_auctions = [(aid, a) for aid, a in auctions.items() if a["active"]]
+    msg = ""
+    now = time.time()
+    for aid, a in auctions.items():
+        status = ""
+        if a["active"]:
+            if (now - a["start_time"]) >= AUCTION_DURATION:
+                a["active"] = False
+                status = "⏰ ASTA CHIUSA"
+            else:
+                status = "⚡ ASTA ATTIVA"
+        else:
+            status = "🛒 IN VENDITA"
 
-    if not active_auctions:
-        await update.message.reply_text("🛍️ Nessun oggetto in vendita")
-        return
+        price = f"{a['price']}€" if a["price"] > 0 else f"Base: {a['base_price']}€"
+        msg += f"ID {aid} - {a['description']}\nPrezzo: {price}\nStato: {status}\n\n"
 
-    msg = "🛍️ OGGETTI IN VENDITA\n\n"
-    for aid, a in active_auctions:
-        price = f"{a['price']}€" if a["price"] > 0 else "Nessuna offerta"
-        msg += f"ID {aid}\n{a['description']}\nPrezzo: {price}\n\n"
-
-    msg += "✍️ Per offrire: #offerta ID prezzo"
+    if not msg:
+        msg = "🛍️ Nessun oggetto in vendita"
     await update.message.reply_text(msg)
+
+
+# ===== FUNZIONE ADMIN =====
+ADMINS = ["tuo_username"]  # sostituisci con i tuoi admin
+def is_admin(username: str):
+    return username in ADMINS
 
 
 # ===== AVVIO BOT =====
