@@ -18,7 +18,6 @@ auction_id_counter = 1
 # Durata asta in secondi (24h = 86400)
 AUCTION_DURATION = 24 * 3600
 
-
 # ===== /START =====
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
@@ -29,6 +28,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "#chiudi ID (solo admin)\n"
         "/shop"
     )
+
+
+# ===== FUNZIONE ADMIN =====
+ADMINS = ["tuo_username"]  # sostituisci con i tuoi admin
+def is_admin(username: str):
+    return username in ADMINS
 
 
 # ===== GESTIONE MESSAGGI =====
@@ -62,10 +67,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "description": description,
             "price": 0,
             "winner": None,
-            "active": False,  # parte alla prima offerta
+            "active": False,
             "photo": photo_file_id,
             "base_price": base_price,
-            "start_time": None
+            "start_time": None,
         }
 
         msg = f"📣 NUOVO OGGETTO IN VENDITA\nID: {auction_id}\n{description}\nPrezzo base: {base_price}€\n💰 L’asta partirà alla prima offerta"
@@ -122,6 +127,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"❌ OFFERTA RIFIUTATA (min {min_offer}€)\nID: {auction_id}\nPrezzo attuale: {auction['price']}€\nMiglior offerente: {winner}"
             )
             return
+
+        # ---------- NOTIFICA AL VECCHIO OFFERENTE ----------
+        old_winner = auction["winner"]
+        if old_winner and old_winner != user:
+            try:
+                # invio solo se abbiamo username valido
+                await context.bot.send_message(
+                    chat_id=f"@{old_winner}",
+                    text=f"⚠️ La tua offerta per '{auction['description']}' è stata superata da {user} ({offer}€)"
+                )
+            except:
+                pass  # ignora errori se username non valido
 
         auction["price"] = offer
         auction["winner"] = user
@@ -184,12 +201,6 @@ async def shop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not msg:
         msg = "🛍️ Nessun oggetto in vendita"
     await update.message.reply_text(msg)
-
-
-# ===== FUNZIONE ADMIN =====
-ADMINS = ["tuo_username"]  # sostituisci con i tuoi admin
-def is_admin(username: str):
-    return username in ADMINS
 
 
 # ===== AVVIO BOT =====
