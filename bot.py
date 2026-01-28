@@ -14,17 +14,25 @@ TOKEN = os.environ.get("TOKEN")
 auctions = {}  # id -> dati asta
 auction_id_counter = 1
 
+# Lista username admin (Telegram username senza @)
+ADMINS = ["tuo_username"]  # sostituisci con i tuoi admin reali
+
 
 # ===== /START =====
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🤖 BOT ASTE ATTIVO!\n\n"
-        "Comandi:\n"
-        "#vendita descrizione (puoi aggiungere foto)\n"
+        "Comandi disponibili:\n"
+        "#vendita descrizione (solo admin, puoi aggiungere foto)\n"
         "#offerta ID prezzo\n"
-        "#chiudi ID\n"
+        "#chiudi ID (solo admin)\n"
         "/shop"
     )
+
+
+# ===== FUNZIONE DI CONTROLLO ADMIN =====
+def is_admin(username: str):
+    return username in ADMINS
 
 
 # ===== GESTIONE MESSAGGI =====
@@ -33,15 +41,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text = update.message.text or update.message.caption or ""
     text = text.strip()
-    user = update.message.from_user.first_name
+    user = update.message.from_user.username or update.message.from_user.first_name
 
     # ---------- VENDITA ----------
     if text.startswith("#vendita"):
+        if not is_admin(user):
+            await update.message.reply_text("❌ Solo gli admin possono aprire aste")
+            return
+
         description = text.replace("#vendita", "").strip()
         auction_id = auction_id_counter
         auction_id_counter += 1
 
-        # Salviamo anche l'ID del file foto se presente
         photo_file_id = update.message.photo[-1].file_id if update.message.photo else None
 
         auctions[auction_id] = {
@@ -54,7 +65,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         msg = f"📣 NUOVO OGGETTO\nID: {auction_id}\n{description}\n💰 Offerte aperte!\nScrivi: #offerta {auction_id} prezzo"
 
-        # Se c’è foto, la inviamo insieme al messaggio
         if photo_file_id:
             await update.message.reply_photo(photo=photo_file_id, caption=msg)
         else:
@@ -76,13 +86,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         auction = auctions.get(auction_id)
         if not auction or not auction["active"]:
-            await update.message.reply_text("❌ Asta non trovata o già chiusa")
+            await update.message.reply_text("❌ Asta non trovata o chiusa")
             return
 
-        if offer <= auction["price"]:
+        min_offer = auction["price"] + 1  # incremento minimo +1€
+        if offer < min_offer:
             winner = auction["winner"] or "Nessuno"
             await update.message.reply_text(
-                f"❌ OFFERTA RIFIUTATA\nID: {auction_id}\nOfferta: {offer}€\nPrezzo attuale: {auction['price']}€\nMiglior offerente: {winner}"
+                f"❌ OFFERTA RIFIUTATA (min {min_offer}€)\nID: {auction_id}\nPrezzo attuale: {auction['price']}€\nMiglior offerente: {winner}"
             )
             return
 
@@ -95,6 +106,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ---------- CHIUSURA ----------
     elif text.startswith("#chiudi"):
+        if not is_admin(user):
+            await update.message.reply_text("❌ Solo admin possono chiudere aste")
+            return
+
         parts = text.split()
         if len(parts) != 2:
             await update.message.reply_text("❌ Usa: #chiudi ID")
