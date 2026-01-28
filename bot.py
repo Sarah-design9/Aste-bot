@@ -10,24 +10,24 @@ import os
 
 TOKEN = os.environ.get("TOKEN")
 
-# ====== DATI ASTE ======
+# ===== DATI ASTE =====
 auctions = {}  # id -> dati asta
 auction_id_counter = 1
 
 
-# ====== START ======
+# ===== /START =====
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🤖 Bot aste attivo!\n\n"
-        "Comandi:\n"
-        "#vendita Nome - Prezzo\n"
+        "🤖 BOT ASTE ATTIVO!\n\n"
+        "📌 Comandi disponibili:\n"
+        "#vendita Nome oggetto - Prezzo base\n"
         "#offerta ID prezzo\n"
         "#chiudi ID\n"
         "/shop"
     )
 
 
-# ====== GESTIONE MESSAGGI ======
+# ===== GESTIONE MESSAGGI =====
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global auction_id_counter
 
@@ -50,10 +50,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         }
 
         await update.message.reply_text(
-            f"🆕 OGGETTO #{auction_id}\n"
+            f"📣 BOT ASTE – NUOVO OGGETTO\n\n"
+            f"🆔 #{auction_id}\n"
             f"{description}\n\n"
             f"💰 Offerte aperte!\n"
-            f"Scrivi: #offerta {auction_id} prezzo"
+            f"✍️ Scrivi: #offerta {auction_id} prezzo"
         )
 
     # ---------- OFFERTA ----------
@@ -94,7 +95,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         auction["winner"] = user
 
         await update.message.reply_text(
-            f"🔥 NUOVA OFFERTA!\n"
+            f"🔥 NUOVA OFFERTA REGISTRATA!\n\n"
             f"🆔 Oggetto #{auction_id}\n"
             f"👤 {user}\n"
             f"💶 {offer}€"
@@ -122,58 +123,4 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         auction["active"] = False
 
-        if auction["winner"]:
-            await update.message.reply_text(
-                f"🏁 ASTA CHIUSA\n\n"
-                f"🆔 Oggetto #{auction_id}\n"
-                f"{auction['description']}\n"
-                f"👤 Vincitore: {auction['winner']}\n"
-                f"💶 Prezzo finale: {auction['price']}€"
-            )
-        else:
-            await update.message.reply_text(
-                f"🏁 ASTA CHIUSA\n\n"
-                f"🆔 Oggetto #{auction_id}\n"
-                f"{auction['description']}\n"
-                f"❌ Nessuna offerta ricevuta."
-            )
-
-
-# ====== SHOP ======
-async def shop(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    active_auctions = [
-        (aid, a) for aid, a in auctions.items() if a["active"]
-    ]
-
-    if not active_auctions:
-        await update.message.reply_text("🛍️ Nessun oggetto in vendita.")
-        return
-
-    message = "🛍️ OGGETTI IN VENDITA\n\n"
-
-    for aid, a in active_auctions:
-        price = f"{a['price']}€" if a["price"] > 0 else "Nessuna offerta"
-        message += (
-            f"🆔 #{aid}\n"
-            f"{a['description']}\n"
-            f"💶 {price}\n\n"
-        )
-
-    message += "📌 Per offrire:\n#offerta ID prezzo"
-
-    await update.message.reply_text(message)
-
-
-# ====== AVVIO ======
-def main():
-    app = ApplicationBuilder().token(TOKEN).build()
-
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("shop", shop))
-    app.add_handler(MessageHandler(filters.TEXT | filters.PHOTO, handle_message))
-
-    app.run_polling()
-
-
-if __name__ == "__main__":
-    main()
+        if aucti
