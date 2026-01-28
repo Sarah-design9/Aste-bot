@@ -1,17 +1,157 @@
 from telegram import Update
-from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, ContextTypes, filters
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    MessageHandler,
+    ContextTypes,
+    filters,
+)
 import os
 
 TOKEN = os.environ.get("TOKEN")
 
+# ===== DATI ASTE =====
+auctions = {}  # id -> dati asta
+auction_id_counter = 1
+
+
+# ===== /START =====
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("BOT ATTIVO!")
+    await update.message.reply_text(
+        "🤖 BOT ASTE ATTIVO!\n\n"
+        "Comandi:\n"
+        "#vendita descrizione (puoi aggiungere foto)\n"
+        "#offerta ID prezzo\n"
+        "#chiudi ID\n"
+        "/shop"
+    )
 
-async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(f"Hai scritto: {update.message.text}")
 
-app = ApplicationBuilder().token(TOKEN).build()
-app.add_handler(CommandHandler("start", start))
-app.add_handler(MessageHandler(filters.TEXT, echo))
+# ===== GESTIONE MESSAGGI =====
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global auction_id_counter
 
-app.run_polling()
+    text = update.message.text or update.message.caption or ""
+    text = text.strip()
+    user = update.message.from_user.first_name
+
+    # ---------- VENDITA ----------
+    if text.startswith("#vendita"):
+        description = text.replace("#vendita", "").strip()
+        auction_id = auction_id_counter
+        auction_id_counter += 1
+
+        # Salviamo anche l'ID del file foto se presente
+        photo_file_id = update.message.photo[-1].file_id if update.message.photo else None
+
+        auctions[auction_id] = {
+            "description": description,
+            "price": 0,
+            "winner": None,
+            "active": True,
+            "photo": photo_file_id,
+        }
+
+        msg = f"📣 NUOVO OGGETTO\nID: {auction_id}\n{description}\n💰 Offerte aperte!\nScrivi: #offerta {auction_id} prezzo"
+
+        # Se c’è foto, la inviamo insieme al messaggio
+        if photo_file_id:
+            await update.message.reply_photo(photo=photo_file_id, caption=msg)
+        else:
+            await update.message.reply_text(msg)
+
+    # ---------- OFFERTA ----------
+    elif text.startswith("#offerta"):
+        parts = text.split()
+        if len(parts) != 3:
+            await update.message.reply_text("❌ Formato corretto: #offerta ID prezzo")
+            return
+
+        try:
+            auction_id = int(parts[1])
+            offer = int(parts[2])
+        except ValueError:
+            await update.message.reply_text("❌ ID o prezzo non valido")
+            return
+
+        auction = auctions.get(auction_id)
+        if not auction or not auction["active"]:
+            await update.message.reply_text("❌ Asta non trovata o già chiusa")
+            return
+
+        if offer <= auction["price"]:
+            winner = auction["winner"] or "Nessuno"
+            await update.message.reply_text(
+                f"❌ OFFERTA RIFIUTATA\nID: {auction_id}\nOfferta: {offer}€\nPrezzo attuale: {auction['price']}€\nMiglior offerente: {winner}"
+            )
+            return
+
+        auction["price"] = offer
+        auction["winner"] = user
+
+        await update.message.reply_text(
+            f"🔥 NUOVA OFFERTA!\nID: {auction_id}\n{user} → {offer}€"
+        )
+
+    # ---------- CHIUSURA ----------
+    elif text.startswith("#chiudi"):
+        parts = text.split()
+        if len(parts) != 2:
+            await update.message.reply_text("❌ Usa: #chiudi ID")
+            return
+
+        try:
+            auction_id = int(parts[1])
+        except ValueError:
+            await update.message.reply_text("❌ ID non valido")
+            return
+
+        auction = auctions.get(auction_id)
+        if not auction or not auction["active"]:
+            await update.message.reply_text("❌ Asta non trovata o già chiusa")
+            return
+
+        auction["active"] = False
+
+        msg = f"🏁 ASTA CHIUSA\nID: {auction_id}\n{auction['description']}\n"
+        if auction["winner"]:
+            msg += f"Vincitore: {auction['winner']}\nPrezzo finale: {auction['price']}€"
+        else:
+            msg += "❌ Nessuna offerta ricevuta."
+
+        if auction.get("photo"):
+            await update.message.reply_photo(photo=auction["photo"], caption=msg)
+        else:
+            await update.message.reply_text(msg)
+
+
+# ===== /SHOP =====
+async def shop(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    active_auctions = [(aid, a) for aid, a in auctions.items() if a["active"]]
+
+    if not active_auctions:
+        await update.message.reply_text("🛍️ Nessun oggetto in vendita")
+        return
+
+    msg = "🛍️ OGGETTI IN VENDITA\n\n"
+    for aid, a in active_auctions:
+        price = f"{a['price']}€" if a["price"] > 0 else "Nessuna offerta"
+        msg += f"ID {aid}\n{a['description']}\nPrezzo: {price}\n\n"
+
+    msg += "✍️ Per offrire: #offerta ID prezzo"
+    await update.message.reply_text(msg)
+
+
+# ===== AVVIO BOT =====
+def main():
+    app = ApplicationBuilder().token(TOKEN).build()
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("shop", shop))
+    app.add_handler(MessageHandler(filters.TEXT | filters.PHOTO, handle_message))
+
+    app.run_polling()
+
+
+if __name__ == "__main__":
+    main()
