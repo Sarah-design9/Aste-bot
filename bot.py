@@ -80,11 +80,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         if offer <= auction["price"]:
-            await update.message.reply_text(
-                f"❌ Offerta troppo bassa.\n"
-                f"Prezzo attuale: {auction['price']}€"
-            )
-            return
+    winner = auction["winner"] or "Nessuno"
+    await update.message.reply_text(
+        f"❌ OFFERTA RIFIUTATA\n\n"
+        f"🆔 Oggetto #{auction_id}\n"
+        f"💶 Offerta proposta: {offer}€\n"
+        f"📈 Prezzo attuale: {auction['price']}€\n"
+        f"👤 Miglior offerente: {winner}"
+    )
+    return
 
         auction["price"] = offer
         auction["winner"] = user
