@@ -1,247 +1,241 @@
-import os
+import logging
+import re
 import asyncio
 from datetime import datetime, timedelta
 
-from telegram import Update
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+)
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
     MessageHandler,
     ContextTypes,
-    filters
+    CallbackQueryHandler,
+    filters,
 )
 
-TOKEN = os.environ.get("TOKEN")
+# ================== CONFIG ==================
 
-auctions = {}
-auction_counter = 1
+TOKEN = "INSERISCI_IL_TUO_TOKEN"
 
-# ---------- UTIL ----------
+ASTA_DURATA_ORE = 24
+CANCELLAZIONE_POST_GIORNI = 3
+
+# ================== STORAGE ==================
+
+aste = {}        # id_asta -> dati
+contatore_aste = 1
+
+# ================== LOG ==================
+
+logging.basicConfig(level=logging.INFO)
+
+# ================== UTIL ==================
+
+def parse_vendita(text):
+    """
+    #vendita oggetto prezzo
+    """
+    match = re.match(r"#vendita\s+(.+?)\s+(\d+)", text, re.IGNORECASE)
+    if not match:
+        return None
+    return match.group(1), int(match.group(2))
+
 def user_link(user):
-    if user.username:
-        return f"@{user.username}"
-    return f"<a href='tg://user?id={user.id}'>{user.first_name}</a>"
+    name = user.first_name or "Utente"
+    return f"[{name}](tg://user?id={user.id})"
 
-# ---------- START ----------
+# ================== START ==================
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🤖 Bot aste attivo e funzionante!")
-
-# ---------- SHOP ----------
-async def shop(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not auctions:
-        await update.message.reply_text("🛒 Nessun oggetto in vendita.")
-        return
-
-    text = "🛍️ <b>SHOP</b>\n\n"
-    for aid, a in auctions.items():
-        stato = "🛒 In vendita"
-        prezzo = a["base_price"]
-
-        if a["active"]:
-            stato = "⚡ Asta attiva"
-            prezzo = a["current_price"]
-
-        text += (
-            f"<b>{aid}</b> – {a['description']}\n"
-            f"{stato}\n"
-            f"Prezzo: {prezzo}€\n\n"
-        )
-
-    await update.message.reply_text(text, parse_mode="HTML")
-
-# ---------- VENDITA ----------
-async def process_sale(msg, context: ContextTypes.DEFAULT_TYPE):
-    global auction_counter
-
-    text = msg.text or msg.caption
-    if not text or not text.lower().startswith("#vendita"):
-        return
-
-    parts = text.split(maxsplit=2)
-    if len(parts) < 3:
-        await msg.reply_text("❌ Usa: #vendita DESCRIZIONE PREZZO_BASE")
-        return
-
-    description = parts[1]
-
-    try:
-        base_price = int(parts[2])
-    except ValueError:
-        await msg.reply_text("❌ Il prezzo base deve essere un numero.")
-        return
-
-    aid = f"A{auction_counter}"
-    auction_counter += 1
-
-    auctions[aid] = {
-        "id": aid,
-        "description": description,
-        "base_price": base_price,
-        "current_price": base_price,
-        "seller": msg.from_user,
-        "winner": None,
-        "active": False,
-        "end_time": None,
-        "chat_id": msg.chat_id,
-    }
-
-    caption = (
-        f"🛒 <b>OGGETTO IN VENDITA</b>\n"
-        f"ID: <b>{aid}</b>\n"
-        f"{description}\n"
-        f"Prezzo base: {base_price}€\n\n"
-        f"👉 Prima offerta valida avvia l’asta"
+    await update.message.reply_text(
+        "👋 Bot aste attivo\n\n"
+        "Per vendere:\n"
+        "#vendita oggetto prezzo\n\n"
+        "Comandi:\n"
+        "/shop – vedi aste"
     )
 
-    # invio messaggio e salvo message_id
-    if msg.photo:
-        sent = await msg.reply_photo(
-            photo=msg.photo[-1].file_id,
-            caption=caption,
-            parse_mode="HTML"
+# ================== CREAZIONE ASTA ==================
+
+async def nuova_vendita(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global contatore_aste
+
+    message = update.message
+    text = message.caption or message.text
+    parsed = parse_vendita(text)
+
+    if not parsed:
+        return
+
+    oggetto, prezzo_base = parsed
+    id_asta = contatore_aste
+    contatore_aste += 1
+
+    fine_asta = datetime.utcnow() + timedelta(hours=ASTA_DURATA_ORE)
+
+    aste[id_asta] = {
+        "oggetto": oggetto,
+        "prezzo": prezzo_base,
+        "venditore": message.from_user,
+        "vincitore": None,
+        "fine": fine_asta,
+        "messaggio_id": message.message_id,
+        "chat_id": message.chat_id,
+    }
+
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("💰 Offri", callback_data=f"offri_{id_asta}")]
+    ])
+
+    await message.reply_text(
+        f"📦 *ASTA #{id_asta}*\n"
+        f"Oggetto: {oggetto}\n"
+        f"Prezzo base: {prezzo_base}\n"
+        f"Fine: {fine_asta.strftime('%d/%m %H:%M')} UTC\n"
+        f"Venditore: {user_link(message.from_user)}",
+        reply_markup=keyboard,
+        parse_mode="Markdown",
+    )
+
+    context.application.create_task(
+        chiudi_asta(id_asta, context)
+    )
+    context.application.create_task(
+        cancella_post(message.chat_id, message.message_id, context)
+    )
+
+# ================== OFFERTE ==================
+
+async def bottone_offerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    id_asta = int(query.data.split("_")[1])
+    asta = aste.get(id_asta)
+
+    if not asta:
+        await query.message.reply_text("❌ Asta non trovata")
+        return
+
+    if datetime.utcnow() > asta["fine"]:
+        await query.message.reply_text("⏰ Asta chiusa")
+        return
+
+    asta["prezzo"] += 1
+    asta["vincitore"] = query.from_user
+
+    await query.message.reply_text(
+        f"💸 Nuova offerta!\n"
+        f"Prezzo: {asta['prezzo']}\n"
+        f"Offerente: {user_link(query.from_user)}",
+        parse_mode="Markdown"
+    )
+
+# ================== SHOP ==================
+
+async def shop(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not aste:
+        await update.message.reply_text("📭 Nessuna asta disponibile")
+        return
+
+    text = "🛒 *ASTE DISPONIBILI*\n\n"
+    keyboard = []
+
+    for id_asta, a in aste.items():
+        stato = "🟢 Attiva" if datetime.utcnow() < a["fine"] else "🔴 Chiusa"
+        text += (
+            f"#{id_asta} – {a['oggetto']}\n"
+            f"Prezzo: {a['prezzo']}\n"
+            f"Stato: {stato}\n\n"
+        )
+        if stato == "🟢 Attiva":
+            keyboard.append([
+                InlineKeyboardButton(
+                    f"Offri su #{id_asta}",
+                    callback_data=f"offri_{id_asta}"
+                )
+            ])
+
+    await update.message.reply_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="Markdown"
+    )
+
+# ================== CHIUSURA ASTA ==================
+
+async def chiudi_asta(id_asta, context):
+    await asyncio.sleep(ASTA_DURATA_ORE * 3600)
+
+    asta = aste.pop(id_asta, None)
+    if not asta:
+        return
+
+    venditore = asta["venditore"]
+    vincitore = asta["vincitore"]
+
+    if vincitore:
+        testo = (
+            f"🏁 *ASTA CHIUSA*\n"
+            f"Oggetto: {asta['oggetto']}\n"
+            f"Prezzo finale: {asta['prezzo']}\n\n"
+            f"Venditore: {user_link(venditore)}\n"
+            f"Vincitore: {user_link(vincitore)}"
+        )
+
+        await context.bot.send_message(
+            venditore.id,
+            "✅ La tua asta è terminata!\n\n"
+            f"Vincitore: {user_link(vincitore)}",
+            parse_mode="Markdown"
+        )
+
+        await context.bot.send_message(
+            vincitore.id,
+            "🎉 Hai vinto un’asta!\n\n"
+            f"Venditore: {user_link(venditore)}",
+            parse_mode="Markdown"
         )
     else:
-        sent = await msg.reply_text(caption, parse_mode="HTML")
+        testo = f"🏁 *ASTA #{id_asta} CHIUSA*\nNessuna offerta."
 
-    # pianifico cancellazione dopo 3 giorni
-    asyncio.create_task(delete_message_later(
-        context,
-        sent.chat_id,
-        sent.message_id,
-        delay_hours=72
-    ))
+    await context.bot.send_message(
+        asta["chat_id"],
+        testo,
+        parse_mode="Markdown"
+    )
 
-# ---------- CANCELLAZIONE POST ----------
-async def delete_message_later(context, chat_id, message_id, delay_hours):
-    await asyncio.sleep(delay_hours * 3600)
+# ================== CANCELLAZIONE POST ==================
+
+async def cancella_post(chat_id, message_id, context):
+    await asyncio.sleep(CANCELLAZIONE_POST_GIORNI * 86400)
     try:
-        await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
-    except:
-        pass  # se già cancellato o permessi mancanti
-
-# ---------- HANDLER TESTO ----------
-async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await process_sale(update.message, context)
-
-# ---------- HANDLER FOTO ----------
-async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await process_sale(update.message, context)
-
-# ---------- OFFERTA ----------
-async def handle_offer(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = update.message
-    parts = msg.text.split()
-
-    if len(parts) != 3:
-        await msg.reply_text("❌ Usa: #offerta ID PREZZO")
-        return
-
-    aid = parts[1]
-
-    try:
-        price = int(parts[2])
-    except ValueError:
-        await msg.reply_text("❌ Il prezzo deve essere un numero.")
-        return
-
-    if aid not in auctions:
-        await msg.reply_text("❌ Asta inesistente.")
-        return
-
-    auction = auctions[aid]
-
-    if not auction["active"]:
-        if price < auction["base_price"]:
-            await msg.reply_text("❌ Offerta sotto il prezzo base.")
-            return
-
-        auction["active"] = True
-        auction["current_price"] = price
-        auction["winner"] = msg.from_user
-        auction["end_time"] = datetime.utcnow() + timedelta(hours=24)
-
-        await msg.reply_text(
-            f"⚡ <b>ASTA AVVIATA</b>\n"
-            f"ID: {aid}\n"
-            f"Offerta iniziale: {price}€\n"
-            f"Da: {user_link(msg.from_user)}",
-            parse_mode="HTML"
-        )
-
-        asyncio.create_task(close_auction_later(context, aid))
-        return
-
-    if datetime.utcnow() > auction["end_time"]:
-        await msg.reply_text("⛔ Asta chiusa.")
-        return
-
-    if price <= auction["current_price"]:
-        await msg.reply_text("❌ Offerta troppo bassa.")
-        return
-
-    old = auction["winner"]
-    auction["current_price"] = price
-    auction["winner"] = msg.from_user
-
-    try:
-        await context.bot.send_message(
-            old.id,
-            f"⚠️ La tua offerta per {aid} è stata superata."
-        )
+        await context.bot.delete_message(chat_id, message_id)
     except:
         pass
 
-    await msg.reply_text(
-        f"✅ Nuova offerta: {price}€ da {user_link(msg.from_user)}",
-        parse_mode="HTML"
-    )
+# ================== MAIN ==================
 
-# ---------- CHIUSURA ASTA ----------
-async def close_auction_later(context, aid):
-    auction = auctions[aid]
-    wait = (auction["end_time"] - datetime.utcnow()).total_seconds()
-    await asyncio.sleep(max(wait, 0))
-
-    if not auction["active"]:
-        return
-
-    auction["active"] = False
-    winner = auction["winner"]
-    seller = auction["seller"]
-
-    await context.bot.send_message(
-        auction["chat_id"],
-        (
-            f"🏁 <b>ASTA CHIUSA</b>\n"
-            f"ID: {aid}\n"
-            f"Vincitore: {user_link(winner)}\n"
-            f"Prezzo: {auction['current_price']}€"
-        ),
-        parse_mode="HTML"
-    )
-
-    await context.bot.send_message(
-        winner.id,
-        f"🎉 Hai vinto l’asta {aid}\nVenditore: {user_link(seller)}",
-        parse_mode="HTML"
-    )
-
-    await context.bot.send_message(
-        seller.id,
-        f"✅ Asta {aid} conclusa\nVincitore: {user_link(winner)}",
-        parse_mode="HTML"
-    )
-
-# ---------- MAIN ----------
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("shop", shop))
 
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^#offerta"), handle_offer))
+    app.add_handler(
+        CallbackQueryHandler(bottone_offerta, pattern="^offri_")
+    )
+
+    app.add_handler(
+        MessageHandler(
+            filters.TEXT | filters.PHOTO,
+            nuova_vendita
+        )
+    )
 
     app.run_polling()
 
