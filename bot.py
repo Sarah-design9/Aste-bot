@@ -49,8 +49,8 @@ async def shop(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(text, parse_mode="HTML")
 
-# ---------- VENDITA (LOGICA UNICA) ----------
-async def process_sale(msg):
+# ---------- VENDITA ----------
+async def process_sale(msg, context: ContextTypes.DEFAULT_TYPE):
     global auction_counter
 
     text = msg.text or msg.caption
@@ -63,6 +63,7 @@ async def process_sale(msg):
         return
 
     description = parts[1]
+
     try:
         base_price = int(parts[2])
     except ValueError:
@@ -92,22 +93,39 @@ async def process_sale(msg):
         f"👉 Prima offerta valida avvia l’asta"
     )
 
+    # invio messaggio e salvo message_id
     if msg.photo:
-        await msg.reply_photo(
+        sent = await msg.reply_photo(
             photo=msg.photo[-1].file_id,
             caption=caption,
             parse_mode="HTML"
         )
     else:
-        await msg.reply_text(caption, parse_mode="HTML")
+        sent = await msg.reply_text(caption, parse_mode="HTML")
+
+    # pianifico cancellazione dopo 3 giorni
+    asyncio.create_task(delete_message_later(
+        context,
+        sent.chat_id,
+        sent.message_id,
+        delay_hours=72
+    ))
+
+# ---------- CANCELLAZIONE POST ----------
+async def delete_message_later(context, chat_id, message_id, delay_hours):
+    await asyncio.sleep(delay_hours * 3600)
+    try:
+        await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
+    except:
+        pass  # se già cancellato o permessi mancanti
 
 # ---------- HANDLER TESTO ----------
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await process_sale(update.message)
+    await process_sale(update.message, context)
 
 # ---------- HANDLER FOTO ----------
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await process_sale(update.message)
+    await process_sale(update.message, context)
 
 # ---------- OFFERTA ----------
 async def handle_offer(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -119,6 +137,7 @@ async def handle_offer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     aid = parts[1]
+
     try:
         price = int(parts[2])
     except ValueError:
@@ -165,7 +184,10 @@ async def handle_offer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     auction["winner"] = msg.from_user
 
     try:
-        await context.bot.send_message(old.id, f"⚠️ La tua offerta per {aid} è stata superata.")
+        await context.bot.send_message(
+            old.id,
+            f"⚠️ La tua offerta per {aid} è stata superata."
+        )
     except:
         pass
 
@@ -174,7 +196,7 @@ async def handle_offer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="HTML"
     )
 
-# ---------- CHIUSURA ----------
+# ---------- CHIUSURA ASTA ----------
 async def close_auction_later(context, aid):
     auction = auctions[aid]
     wait = (auction["end_time"] - datetime.utcnow()).total_seconds()
