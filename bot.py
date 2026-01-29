@@ -17,7 +17,7 @@ from telegram.ext import (
 
 # ================= CONFIG =================
 
-TOKEN = "INSERISCI_IL_TUO_TOKEN"
+TOKEN = "7998174738:AAHChHqy0hicxVPr5kWZ5xf61T-akl1bCYw"
 DATA_FILE = "data.json"
 
 ASTA_DURATA_ORE = 24
