@@ -16,17 +16,17 @@ TOKEN = os.environ.get("TOKEN")
 auctions = {}
 auction_counter = 1
 
-# -------- UTIL --------
+# ---------- UTIL ----------
 def user_link(user):
     if user.username:
         return f"@{user.username}"
     return f"<a href='tg://user?id={user.id}'>{user.first_name}</a>"
 
-# -------- START --------
+# ---------- START ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🤖 Bot aste attivo e funzionante!")
 
-# -------- SHOP --------
+# ---------- SHOP ----------
 async def shop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not auctions:
         await update.message.reply_text("🛒 Nessun oggetto in vendita.")
@@ -49,25 +49,20 @@ async def shop(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(text, parse_mode="HTML")
 
-# -------- VENDITA (TESTO + FOTO) --------
-async def handle_sale(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ---------- VENDITA (LOGICA UNICA) ----------
+async def process_sale(msg):
     global auction_counter
 
-    msg = update.message
-
-    # testo può essere in caption o text
-    text = msg.caption if msg.caption else msg.text
-    if not text:
+    text = msg.text or msg.caption
+    if not text or not text.lower().startswith("#vendita"):
         return
 
     parts = text.split(maxsplit=2)
-
     if len(parts) < 3:
         await msg.reply_text("❌ Usa: #vendita DESCRIZIONE PREZZO_BASE")
         return
 
     description = parts[1]
-
     try:
         base_price = int(parts[2])
     except ValueError:
@@ -106,7 +101,15 @@ async def handle_sale(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await msg.reply_text(caption, parse_mode="HTML")
 
-# -------- OFFERTA --------
+# ---------- HANDLER TESTO ----------
+async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await process_sale(update.message)
+
+# ---------- HANDLER FOTO ----------
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await process_sale(update.message)
+
+# ---------- OFFERTA ----------
 async def handle_offer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
     parts = msg.text.split()
@@ -116,7 +119,6 @@ async def handle_offer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     aid = parts[1]
-
     try:
         price = int(parts[2])
     except ValueError:
@@ -129,7 +131,6 @@ async def handle_offer(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     auction = auctions[aid]
 
-    # Asta non attiva → prima offerta
     if not auction["active"]:
         if price < auction["base_price"]:
             await msg.reply_text("❌ Offerta sotto il prezzo base.")
@@ -151,7 +152,6 @@ async def handle_offer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         asyncio.create_task(close_auction_later(context, aid))
         return
 
-    # Asta attiva
     if datetime.utcnow() > auction["end_time"]:
         await msg.reply_text("⛔ Asta chiusa.")
         return
@@ -160,15 +160,12 @@ async def handle_offer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await msg.reply_text("❌ Offerta troppo bassa.")
         return
 
-    old_winner = auction["winner"]
+    old = auction["winner"]
     auction["current_price"] = price
     auction["winner"] = msg.from_user
 
     try:
-        await context.bot.send_message(
-            chat_id=old_winner.id,
-            text=f"⚠️ La tua offerta per {aid} è stata superata."
-        )
+        await context.bot.send_message(old.id, f"⚠️ La tua offerta per {aid} è stata superata.")
     except:
         pass
 
@@ -177,7 +174,7 @@ async def handle_offer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="HTML"
     )
 
-# -------- CHIUSURA --------
+# ---------- CHIUSURA ----------
 async def close_auction_later(context, aid):
     auction = auctions[aid]
     wait = (auction["end_time"] - datetime.utcnow()).total_seconds()
@@ -187,13 +184,12 @@ async def close_auction_later(context, aid):
         return
 
     auction["active"] = False
-
     winner = auction["winner"]
     seller = auction["seller"]
 
     await context.bot.send_message(
-        chat_id=auction["chat_id"],
-        text=(
+        auction["chat_id"],
+        (
             f"🏁 <b>ASTA CHIUSA</b>\n"
             f"ID: {aid}\n"
             f"Vincitore: {user_link(winner)}\n"
@@ -203,35 +199,26 @@ async def close_auction_later(context, aid):
     )
 
     await context.bot.send_message(
-        chat_id=winner.id,
-        text=(
-            f"🎉 Hai vinto l’asta {aid}\n"
-            f"Venditore: {user_link(seller)}"
-        ),
+        winner.id,
+        f"🎉 Hai vinto l’asta {aid}\nVenditore: {user_link(seller)}",
         parse_mode="HTML"
     )
 
     await context.bot.send_message(
-        chat_id=seller.id,
-        text=(
-            f"✅ Asta {aid} conclusa\n"
-            f"Vincitore: {user_link(winner)}"
-        ),
+        seller.id,
+        f"✅ Asta {aid} conclusa\nVincitore: {user_link(winner)}",
         parse_mode="HTML"
     )
 
-# -------- MAIN --------
+# ---------- MAIN ----------
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("shop", shop))
 
-    app.add_handler(MessageHandler(
-        (filters.TEXT | filters.PHOTO) & filters.Regex(r"^#vendita"),
-        handle_sale
-    ))
-
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^#offerta"), handle_offer))
 
     app.run_polling()
