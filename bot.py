@@ -26,8 +26,8 @@ def estrai_prezzo(testo):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🤖 Bot aste attivo\n"
-        "Usa #vendita nome prezzo\n"
-        "Rispondi al messaggio dell’asta con un numero"
+        "• #vendita nome prezzo\n"
+        "• Rispondi al messaggio con un numero"
     )
 
 
@@ -59,22 +59,22 @@ async def nuova_vendita(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"↩️ Rispondi a QUESTO messaggio con l’offerta"
     )
 
+    # 🔥 NON creare un nuovo messaggio
     if msg.photo:
-        sent = await msg.reply_photo(
-            photo=msg.photo[-1].file_id,
-            caption=testo_asta
-        )
+        await msg.edit_caption(caption=testo_asta)
         tipo = "photo"
+        message_id = msg.message_id
     else:
-        sent = await msg.reply_text(testo_asta)
+        await msg.edit_text(testo_asta)
         tipo = "text"
+        message_id = msg.message_id
 
     aste[asta_id] = {
         "nome": nome,
         "prezzo": prezzo,
         "venditore": msg.from_user,
         "chat_id": msg.chat_id,
-        "messaggio_id": sent.message_id,
+        "messaggio_id": message_id,
         "tipo": tipo,
         "fine": time.time() + 86400,
     }
