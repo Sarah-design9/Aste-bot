@@ -10,7 +10,7 @@ import os
 import re
 import time
 
-TOKEN = os.environ.get("TOKEN")
+TOKEN = os.environ.get("7998174738:AAHChHqy0hicxVPr5kWZ5xf61T-akl1bCYw")
 
 # ===== MEMORIA ASTE (per ora in RAM) =====
 aste = {}
