@@ -15,19 +15,19 @@ aste = {}
 next_asta_id = 1
 
 
-def estrai_prezzo(testo: str):
+def estrai_prezzo(testo):
     if not testo:
         return None
     testo = testo.lower().replace("€", "").replace("#offerta", "").strip()
-    match = re.search(r"\d+", testo)
-    return int(match.group()) if match else None
+    m = re.search(r"\d+", testo)
+    return int(m.group()) if m else None
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "👋 Bot aste attivo\n"
+        "🤖 Bot aste attivo\n"
         "Usa #vendita nome prezzo\n"
-        "Poi rispondi al messaggio dell’asta con un numero"
+        "Rispondi al messaggio dell’asta con un numero"
     )
 
 
@@ -45,26 +45,17 @@ async def nuova_vendita(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     nome = " ".join(parti[1:-1])
-    prezzo_base = estrai_prezzo(parti[-1])
-    if prezzo_base is None:
+    prezzo = estrai_prezzo(parti[-1])
+    if prezzo is None:
         return
 
     asta_id = next_asta_id
     next_asta_id += 1
 
-    aste[asta_id] = {
-        "nome": nome,
-        "prezzo": prezzo_base,
-        "venditore": msg.from_user,
-        "chat_id": msg.chat_id,
-        "messaggio_id": None,
-        "fine": time.time() + 86400,
-    }
-
     testo_asta = (
         f"🆔 Asta #{asta_id}\n"
         f"📦 {nome}\n"
-        f"💰 Prezzo attuale: {prezzo_base}€\n\n"
+        f"💰 Prezzo attuale: {prezzo}€\n\n"
         f"↩️ Rispondi a QUESTO messaggio con l’offerta"
     )
 
@@ -73,15 +64,24 @@ async def nuova_vendita(update: Update, context: ContextTypes.DEFAULT_TYPE):
             photo=msg.photo[-1].file_id,
             caption=testo_asta
         )
+        tipo = "photo"
     else:
         sent = await msg.reply_text(testo_asta)
+        tipo = "text"
 
-    aste[asta_id]["messaggio_id"] = sent.message_id
+    aste[asta_id] = {
+        "nome": nome,
+        "prezzo": prezzo,
+        "venditore": msg.from_user,
+        "chat_id": msg.chat_id,
+        "messaggio_id": sent.message_id,
+        "tipo": tipo,
+        "fine": time.time() + 86400,
+    }
 
 
 async def offerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
-
     if not msg.reply_to_message:
         return
 
@@ -100,11 +100,25 @@ async def offerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             asta["prezzo"] = prezzo
 
-            await msg.reply_text(
-                f"🔥 Nuova offerta!\n"
+            nuovo_testo = (
                 f"🆔 Asta #{asta_id}\n"
-                f"💰 {prezzo}€ da {msg.from_user.first_name}"
+                f"📦 {asta['nome']}\n"
+                f"💰 Prezzo attuale: {prezzo}€\n\n"
+                f"↩️ Rispondi a QUESTO messaggio con l’offerta"
             )
+
+            if asta["tipo"] == "photo":
+                await context.bot.edit_message_caption(
+                    chat_id=asta["chat_id"],
+                    message_id=asta["messaggio_id"],
+                    caption=nuovo_testo
+                )
+            else:
+                await context.bot.edit_message_text(
+                    chat_id=asta["chat_id"],
+                    message_id=asta["messaggio_id"],
+                    text=nuovo_testo
+                )
             return
 
 
@@ -126,7 +140,6 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("shop", shop))
 
-    # TESTO
     app.add_handler(
         MessageHandler(
             filters.TEXT & filters.Regex(r"^#vendita"),
@@ -134,7 +147,6 @@ def main():
         )
     )
 
-    # FOTO CON DIDASCALIA
     app.add_handler(
         MessageHandler(
             filters.PHOTO & filters.CaptionRegex(r"^#vendita"),
@@ -142,7 +154,6 @@ def main():
         )
     )
 
-    # OFFERTE (reply)
     app.add_handler(
         MessageHandler(
             filters.TEXT & filters.REPLY,
