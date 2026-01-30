@@ -19,8 +19,10 @@ next_id = 1
 
 
 def estrai_importo(testo):
-    match = re.search(r"(\d+)", testo)
-    return int(match.group(1)) if match else None
+    if not testo:
+        return None
+    m = re.search(r"(\d+)", testo)
+    return int(m.group(1)) if m else None
 
 
 def format_asta(a):
@@ -44,8 +46,10 @@ async def vendita(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global next_id
 
     testo = update.message.caption or update.message.text
-    parti = testo.split(maxsplit=2)
+    if not testo.lower().startswith("#vendita"):
+        return
 
+    parti = testo.split(maxsplit=2)
     if len(parti) < 3:
         return
 
@@ -61,13 +65,13 @@ async def vendita(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "id": asta_id,
         "oggetto": oggetto,
         "prezzo": base,
-        "base": base,
         "venditore": update.message.from_user.mention_html(),
         "offerente": None,
         "attiva": False,
         "fine": None,
         "chat_id": update.message.chat_id,
         "msg_id": None,
+        "has_photo": bool(update.message.photo)
     }
 
     testo_asta = format_asta(aste[asta_id])
@@ -91,34 +95,45 @@ async def offerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.reply_to_message:
         return
 
-    testo = update.message.text
-    importo = estrai_importo(testo)
+    importo = estrai_importo(update.message.text)
     if importo is None:
         return
 
+    reply_id = update.message.reply_to_message.message_id
+
     for a in aste.values():
-        if a["msg_id"] == update.message.reply_to_message.message_id:
-            if a["fine"] and datetime.now() > a["fine"]:
-                return
+        if a["msg_id"] != reply_id:
+            continue
 
-            if importo <= a["prezzo"]:
-                return
+        if a["fine"] and datetime.now() > a["fine"]:
+            return
 
-            if not a["attiva"]:
-                a["attiva"] = True
-                a["fine"] = datetime.now() + timedelta(hours=24)
-                asyncio.create_task(chiudi_asta(a["id"], context))
+        if importo <= a["prezzo"]:
+            return
 
-            a["prezzo"] = importo
-            a["offerente"] = update.message.from_user.mention_html()
+        if not a["attiva"]:
+            a["attiva"] = True
+            a["fine"] = datetime.now() + timedelta(hours=24)
+            asyncio.create_task(chiudi_asta(a["id"], context))
 
+        a["prezzo"] = importo
+        a["offerente"] = update.message.from_user.mention_html()
+
+        if a["has_photo"]:
             await context.bot.edit_message_caption(
                 chat_id=a["chat_id"],
                 message_id=a["msg_id"],
                 caption=format_asta(a),
                 parse_mode="Markdown"
             )
-            return
+        else:
+            await context.bot.edit_message_text(
+                chat_id=a["chat_id"],
+                message_id=a["msg_id"],
+                text=format_asta(a),
+                parse_mode="Markdown"
+            )
+        return
 
 
 async def chiudi_asta(asta_id, context):
@@ -162,7 +177,10 @@ app = ApplicationBuilder().token(TOKEN).build()
 app.add_handler(CommandHandler("start", start))
 app.add_handler(CommandHandler("shop", shop))
 
-app.add_handler(MessageHandler(filters.Regex(r"^#vendita"), vendita))
-app.add_handler(MessageHandler(filters.TEXT & filters.REPLY, offerta))
+# VENDITA: testo + foto
+app.add_handler(MessageHandler(filters.ALL, vendita))
+
+# OFFERTE: reply a qualsiasi messaggio
+app.add_handler(MessageHandler(filters.REPLY, offerta))
 
 app.run_polling()
