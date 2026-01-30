@@ -9,7 +9,7 @@ from telegram.ext import (
     filters,
 )
 
-BOT_TOKEN = "INSERISCI_IL_TUO_TOKEN"
+BOT_TOKEN = "7998174738:AAHChHqy0hicxVPr5kWZ5xf61T-akl1bCYw"
 
 # aste attive
 aste = {}
