@@ -21,10 +21,11 @@ next_id = 1
 
 
 def render_asta(a):
-    if a["fine"] is None:
-        fine_text = "⏳ Parte alla prima offerta"
-    else:
-        fine_text = a["fine"].strftime("%d/%m %H:%M")
+    fine = (
+        "⏳ Parte alla prima offerta"
+        if a["fine"] is None
+        else a["fine"].strftime("%d/%m %H:%M")
+    )
 
     stato = "🟢 ATTIVA" if a["attiva"] else "🔴 CHIUSA"
 
@@ -32,9 +33,9 @@ def render_asta(a):
         f"📦 {a['titolo']}\n"
         f"💰 Base d’asta: {a['base']}€\n"
         f"🔥 Offerta attuale: {a['attuale']}€\n"
-        f"⏰ Fine: {fine_text}\n"
+        f"⏰ Fine: {fine}\n"
         f"{stato}\n\n"
-        f"👉 Rispondi a questo messaggio con un importo"
+        f"👉 Rispondi con un importo per offrire"
     )
 
 
@@ -45,7 +46,7 @@ async def shop(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Nessuna asta disponibile")
         return
 
-    testo = "🛒 ASTE DISPONIBILI\n\n"
+    testo = "🛒 ASTE ATTIVE\n\n"
     for a in attive:
         testo += f"#{a['id']} – {a['titolo']} | 💰 {a['attuale']}€\n"
 
@@ -57,49 +58,50 @@ async def gestore(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global next_id
     msg = update.message
 
-    # ===== OFFERTA =====
+    # ================= OFFERTA =================
     if msg.reply_to_message and msg.text:
         valore_raw = re.sub(r"[^\d]", "", msg.text)
-        if not valore_raw:
-            return
+        if valore_raw:
+            valore = int(valore_raw)
 
-        valore = int(valore_raw)
-        reply_id = msg.reply_to_message.message_id
+            for asta in aste.values():
+                if asta["message_id"] == msg.reply_to_message.message_id and asta["attiva"]:
 
-        for asta in aste.values():
-            if asta["message_id"] == reply_id and asta["attiva"]:
+                    if asta["fine"] is None:
+                        asta["fine"] = datetime.now() + timedelta(hours=DURATA_ASTA_ORE)
 
-                # prima offerta → parte il timer
-                if asta["fine"] is None:
-                    asta["fine"] = datetime.now() + timedelta(hours=DURATA_ASTA_ORE)
+                    if datetime.now() > asta["fine"]:
+                        asta["attiva"] = False
+                        return
 
-                # asta scaduta
-                if datetime.now() > asta["fine"]:
-                    asta["attiva"] = False
+                    if valore <= asta["attuale"]:
+                        return
+
+                    asta["attuale"] = valore
+                    nuovo_testo = render_asta(asta)
+
+                    # 🔁 TENTATIVO EDIT
+                    try:
+                        await context.bot.edit_message_caption(
+                            chat_id=asta["chat_id"],
+                            message_id=asta["message_id"],
+                            caption=nuovo_testo,
+                        )
+                    except:
+                        try:
+                            await context.bot.edit_message_text(
+                                chat_id=asta["chat_id"],
+                                message_id=asta["message_id"],
+                                text=nuovo_testo,
+                            )
+                        except:
+                            # ✅ FALLBACK SICURO (MAI SILENZIO)
+                            await msg.reply_text(
+                                f"✅ Nuova offerta registrata: {valore}€"
+                            )
                     return
 
-                # offerta troppo bassa
-                if valore <= asta["attuale"]:
-                    return
-
-                asta["attuale"] = valore
-                nuovo_testo = render_asta(asta)
-
-                try:
-                    await context.bot.edit_message_caption(
-                        chat_id=asta["chat_id"],
-                        message_id=asta["message_id"],
-                        caption=nuovo_testo,
-                    )
-                except:
-                    await context.bot.edit_message_text(
-                        chat_id=asta["chat_id"],
-                        message_id=asta["message_id"],
-                        text=nuovo_testo,
-                    )
-                return
-
-    # ===== VENDITA =====
+    # ================= VENDITA =================
     testo = msg.caption if msg.photo else msg.text
     if not testo or not testo.lower().startswith("#vendita"):
         return
