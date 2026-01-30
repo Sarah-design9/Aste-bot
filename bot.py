@@ -9,18 +9,25 @@ from telegram.ext import (
 import os
 import re
 
-# ===== TOKEN DA ENV =====
+# ========= TOKEN =========
 TOKEN = os.environ.get("TOKEN")
+# In alternativa (non consigliato):
+# TOKEN = "INSERISCI_TOKEN"
 
-# ===== MEMORIA ASTE =====
+# ========= MEMORIA ASTE =========
 aste = {}
 asta_id_counter = 1
 
-# ===== /start =====
+# ========= START =========
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🤖 Bot aste attivo e funzionante!")
+    await update.message.reply_text(
+        "🤖 Bot aste attivo!\n"
+        "Usa:\n"
+        "#vendita nome prezzo\n"
+        "Offerte: rispondi al messaggio dell’asta"
+    )
 
-# ===== /shop =====
+# ========= SHOP =========
 async def shop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not aste:
         await update.message.reply_text("📭 Nessuna asta disponibile")
@@ -28,20 +35,30 @@ async def shop(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     testo = "🛒 ASTE ATTIVE:\n\n"
     for aid, a in aste.items():
-        testo += f"#{aid} • {a['nome']} • {a['prezzo']}€\n"
-
+        testo += (
+            f"#{aid} • {a['nome']}\n"
+            f"Base: {a['prezzo_base']}€ | Attuale: {a['prezzo_attuale']}€\n\n"
+        )
     await update.message.reply_text(testo)
 
-# ===== CREAZIONE ASTA =====
+# ========= TESTO ASTA =========
+def testo_asta(a):
+    return (
+        f"🆕 ASTA #{a['id']}\n"
+        f"📦 {a['nome']}\n"
+        f"💰 Base d’asta: {a['prezzo_base']}€\n"
+        f"💵 Offerta attuale: {a['prezzo_attuale']}€\n"
+        f"👤 Venditore: {a['venditore']}\n\n"
+        f"✍️ Rispondi a QUESTO messaggio per offrire"
+    )
+
+# ========= VENDITA =========
 async def vendita(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global asta_id_counter
 
     msg = update.message
     testo = msg.caption or msg.text
-    if not testo:
-        return
-
-    if not testo.lower().startswith("#vendita"):
+    if not testo or not testo.lower().startswith("#vendita"):
         return
 
     match = re.match(r"#vendita\s+(.+)\s+(\d+)", testo.lower())
@@ -50,44 +67,40 @@ async def vendita(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     nome = match.group(1)
-    prezzo = int(match.group(2))
+    prezzo_base = int(match.group(2))
 
-    asta_id = asta_id_counter
+    asta = {
+        "id": asta_id_counter,
+        "nome": nome,
+        "prezzo_base": prezzo_base,
+        "prezzo_attuale": prezzo_base,
+        "venditore": msg.from_user.full_name,
+        "chat_id": msg.chat_id,
+        "message_id": None,
+        "con_foto": bool(msg.photo),
+    }
     asta_id_counter += 1
 
-    testo_asta = (
-        f"🆕 ASTA #{asta_id}\n"
-        f"📦 {nome}\n"
-        f"💰 Prezzo attuale: {prezzo}€\n"
-        f"👤 Venditore: {msg.from_user.full_name}\n\n"
-        f"✍️ Rispondi a QUESTO messaggio per offrire"
-    )
+    testo_msg = testo_asta(asta)
 
-    # 🔑 IL BOT PUBBLICA SEMPRE UN SUO MESSAGGIO
     if msg.photo:
         sent = await msg.chat.send_photo(
             photo=msg.photo[-1].file_id,
-            caption=testo_asta,
+            caption=testo_msg,
         )
     else:
-        sent = await msg.chat.send_message(testo_asta)
+        sent = await msg.chat.send_message(testo_msg)
 
-    aste[asta_id] = {
-        "nome": nome,
-        "prezzo": prezzo,
-        "message_id": sent.message_id,
-        "chat_id": msg.chat_id,
-    }
+    asta["message_id"] = sent.message_id
+    aste[asta["id"]] = asta
 
-# ===== OFFERTE =====
+# ========= OFFERTE =========
 async def offerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
 
-    # deve essere una risposta
     if not msg.reply_to_message:
         return
 
-    # deve essere un numero (con o senza €)
     testo = msg.text.replace("€", "").strip()
     if not testo.isdigit():
         return
@@ -95,35 +108,23 @@ async def offerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
     offerta = int(testo)
     reply = msg.reply_to_message
 
-    # trova asta collegata
     asta = None
     for a in aste.values():
-        if (
-            a["message_id"] == reply.message_id
-            and a["chat_id"] == msg.chat_id
-        ):
+        if a["message_id"] == reply.message_id and a["chat_id"] == msg.chat_id:
             asta = a
             break
 
     if not asta:
         return
 
-    # offerta troppo bassa
-    if offerta <= asta["prezzo"]:
+    if offerta <= asta["prezzo_attuale"]:
         return
 
-    # aggiorna prezzo
-    asta["prezzo"] = offerta
+    asta["prezzo_attuale"] = offerta
+    nuovo_testo = testo_asta(asta)
 
-    nuovo_testo = (
-        f"🆕 ASTA\n"
-        f"📦 {asta['nome']}\n"
-        f"💰 Prezzo attuale: {asta['prezzo']}€\n\n"
-        f"✍️ Rispondi a QUESTO messaggio per offrire"
-    )
-
-    # 🔑 QUI È LA DIFFERENZA CHE SISTEMA LE FOTO
-    if reply.caption is not None:
+    # ✅ LOGICA CORRETTA FOTO / TESTO
+    if asta["con_foto"]:
         await context.bot.edit_message_caption(
             chat_id=msg.chat_id,
             message_id=reply.message_id,
@@ -136,13 +137,12 @@ async def offerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text=nuovo_testo,
         )
 
-# ===== AVVIO BOT =====
+# ========= AVVIO =========
 app = ApplicationBuilder().token(TOKEN).build()
 
 app.add_handler(CommandHandler("start", start))
 app.add_handler(CommandHandler("shop", shop))
 
-# solo messaggi di vendita (testo o foto)
 app.add_handler(
     MessageHandler(
         (filters.TEXT | filters.PHOTO) & filters.Regex(r"^#vendita"),
@@ -150,12 +150,8 @@ app.add_handler(
     )
 )
 
-# solo offerte (risposta al messaggio del bot)
 app.add_handler(
-    MessageHandler(
-        filters.TEXT & filters.REPLY,
-        offerta,
-    )
+    MessageHandler(filters.TEXT & filters.REPLY, offerta)
 )
 
 app.run_polling()
