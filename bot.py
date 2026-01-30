@@ -8,7 +8,6 @@ from telegram.ext import (
 )
 import os
 import re
-import time
 
 TOKEN = os.environ.get("TOKEN")
 
@@ -35,12 +34,13 @@ async def vendita(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global asta_id_counter
 
     msg = update.message
-    testo = msg.caption if msg.caption else msg.text
-    if not testo:
+    testo = msg.caption or msg.text
+    if not testo or not testo.lower().startswith("#vendita"):
         return
 
     match = re.match(r"#vendita\s+(.+)\s+(\d+)", testo.lower())
     if not match:
+        await msg.reply_text("❌ Usa: #vendita nome prezzo")
         return
 
     nome = match.group(1)
@@ -48,14 +48,6 @@ async def vendita(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     asta_id = asta_id_counter
     asta_id_counter += 1
-
-    aste[asta_id] = {
-        "nome": nome,
-        "prezzo": prezzo,
-        "venditore": msg.from_user.full_name,
-        "message_id": None,
-        "chat_id": msg.chat_id,
-    }
 
     testo_asta = (
         f"🆕 ASTA #{asta_id}\n"
@@ -73,14 +65,22 @@ async def vendita(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         sent = await msg.chat.send_message(testo_asta)
 
-    aste[asta_id]["message_id"] = sent.message_id
+    aste[asta_id] = {
+        "nome": nome,
+        "prezzo": prezzo,
+        "message_id": sent.message_id,
+        "chat_id": msg.chat_id,
+    }
 
 # ---------- OFFERTE ----------
 async def offerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
+
+    # deve essere una risposta
     if not msg.reply_to_message:
         return
 
+    # deve essere un numero
     testo = msg.text.replace("€", "").strip()
     if not testo.isdigit():
         return
@@ -88,9 +88,13 @@ async def offerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
     offerta = int(testo)
     reply = msg.reply_to_message
 
+    # trova l'asta collegata
     asta = None
     for a in aste.values():
-        if a["message_id"] == reply.message_id:
+        if (
+            a["message_id"] == reply.message_id
+            and a["chat_id"] == msg.chat_id
+        ):
             asta = a
             break
 
@@ -128,14 +132,15 @@ app = ApplicationBuilder().token(TOKEN).build()
 app.add_handler(CommandHandler("start", start))
 app.add_handler(CommandHandler("shop", shop))
 
-# 🔥 QUESTO È IL PEZZO CHIAVE
+# SOLO messaggi di vendita
 app.add_handler(MessageHandler(
-    filters.TEXT | filters.PHOTO,
+    (filters.TEXT | filters.PHOTO) & filters.Regex(r"^#vendita"),
     vendita
 ))
 
+# SOLO offerte (reply + numero)
 app.add_handler(MessageHandler(
-    filters.TEXT & ~filters.COMMAND,
+    filters.TEXT & filters.REPLY,
     offerta
 ))
 
