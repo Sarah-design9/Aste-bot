@@ -9,16 +9,18 @@ from telegram.ext import (
 import os
 import re
 
+# ===== TOKEN DA ENV =====
 TOKEN = os.environ.get("TOKEN")
 
+# ===== MEMORIA ASTE =====
 aste = {}
 asta_id_counter = 1
 
-# ---------- START ----------
+# ===== /start =====
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🤖 Bot aste attivo!")
+    await update.message.reply_text("🤖 Bot aste attivo e funzionante!")
 
-# ---------- SHOP ----------
+# ===== /shop =====
 async def shop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not aste:
         await update.message.reply_text("📭 Nessuna asta disponibile")
@@ -27,15 +29,19 @@ async def shop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     testo = "🛒 ASTE ATTIVE:\n\n"
     for aid, a in aste.items():
         testo += f"#{aid} • {a['nome']} • {a['prezzo']}€\n"
+
     await update.message.reply_text(testo)
 
-# ---------- VENDITA ----------
+# ===== CREAZIONE ASTA =====
 async def vendita(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global asta_id_counter
 
     msg = update.message
     testo = msg.caption or msg.text
-    if not testo or not testo.lower().startswith("#vendita"):
+    if not testo:
+        return
+
+    if not testo.lower().startswith("#vendita"):
         return
 
     match = re.match(r"#vendita\s+(.+)\s+(\d+)", testo.lower())
@@ -52,11 +58,12 @@ async def vendita(update: Update, context: ContextTypes.DEFAULT_TYPE):
     testo_asta = (
         f"🆕 ASTA #{asta_id}\n"
         f"📦 {nome}\n"
-        f"💰 Prezzo: {prezzo}€\n"
+        f"💰 Prezzo attuale: {prezzo}€\n"
         f"👤 Venditore: {msg.from_user.full_name}\n\n"
         f"✍️ Rispondi a QUESTO messaggio per offrire"
     )
 
+    # 🔑 IL BOT PUBBLICA SEMPRE UN SUO MESSAGGIO
     if msg.photo:
         sent = await msg.chat.send_photo(
             photo=msg.photo[-1].file_id,
@@ -72,7 +79,7 @@ async def vendita(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "chat_id": msg.chat_id,
     }
 
-# ---------- OFFERTE ----------
+# ===== OFFERTE =====
 async def offerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
 
@@ -80,7 +87,7 @@ async def offerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not msg.reply_to_message:
         return
 
-    # deve essere un numero
+    # deve essere un numero (con o senza €)
     testo = msg.text.replace("€", "").strip()
     if not testo.isdigit():
         return
@@ -88,7 +95,7 @@ async def offerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
     offerta = int(testo)
     reply = msg.reply_to_message
 
-    # trova l'asta collegata
+    # trova asta collegata
     asta = None
     for a in aste.values():
         if (
@@ -101,9 +108,11 @@ async def offerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not asta:
         return
 
+    # offerta troppo bassa
     if offerta <= asta["prezzo"]:
         return
 
+    # aggiorna prezzo
     asta["prezzo"] = offerta
 
     nuovo_testo = (
@@ -113,7 +122,8 @@ async def offerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"✍️ Rispondi a QUESTO messaggio per offrire"
     )
 
-    if reply.photo:
+    # 🔑 QUI È LA DIFFERENZA CHE SISTEMA LE FOTO
+    if reply.caption is not None:
         await context.bot.edit_message_caption(
             chat_id=msg.chat_id,
             message_id=reply.message_id,
@@ -126,22 +136,26 @@ async def offerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text=nuovo_testo,
         )
 
-# ---------- AVVIO ----------
+# ===== AVVIO BOT =====
 app = ApplicationBuilder().token(TOKEN).build()
 
 app.add_handler(CommandHandler("start", start))
 app.add_handler(CommandHandler("shop", shop))
 
-# SOLO messaggi di vendita
-app.add_handler(MessageHandler(
-    (filters.TEXT | filters.PHOTO) & filters.Regex(r"^#vendita"),
-    vendita
-))
+# solo messaggi di vendita (testo o foto)
+app.add_handler(
+    MessageHandler(
+        (filters.TEXT | filters.PHOTO) & filters.Regex(r"^#vendita"),
+        vendita,
+    )
+)
 
-# SOLO offerte (reply + numero)
-app.add_handler(MessageHandler(
-    filters.TEXT & filters.REPLY,
-    offerta
-))
+# solo offerte (risposta al messaggio del bot)
+app.add_handler(
+    MessageHandler(
+        filters.TEXT & filters.REPLY,
+        offerta,
+    )
+)
 
 app.run_polling()
