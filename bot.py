@@ -12,7 +12,7 @@ from telegram.ext import (
     filters
 )
 
-TOKEN = os.environ.get("TOKEN") or "INCOLLA_QUI_IL_TOKEN"
+TOKEN = os.environ.get("TOKEN")
 
 aste = {}
 next_id = 1
@@ -29,9 +29,9 @@ def format_asta(a):
     stato = "🟢 ATTIVA" if a["attiva"] else "⏳ IN ATTESA"
     fine = a["fine"].strftime("%d/%m %H:%M") if a["fine"] else "-"
     return (
-        f"📦 *Asta #{a['id']}*\n"
+        f"📦 <b>Asta #{a['id']}</b>\n"
         f"📝 {a['oggetto']}\n"
-        f"💰 Prezzo attuale: *{a['prezzo']}€*\n"
+        f"💰 Prezzo attuale: <b>{a['prezzo']}€</b>\n"
         f"👤 Miglior offerente: {a['offerente'] or '-'}\n"
         f"⏰ Fine: {fine}\n"
         f"{stato}"
@@ -46,7 +46,7 @@ async def vendita(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global next_id
 
     testo = update.message.caption or update.message.text
-    if not testo.lower().startswith("#vendita"):
+    if not testo or not testo.lower().startswith("#vendita"):
         return
 
     parti = testo.split(maxsplit=2)
@@ -80,29 +80,28 @@ async def vendita(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg = await update.message.reply_photo(
             photo=update.message.photo[-1].file_id,
             caption=testo_asta,
-            parse_mode="Markdown"
+            parse_mode="HTML"
         )
     else:
         msg = await update.message.reply_text(
             testo_asta,
-            parse_mode="Markdown"
+            parse_mode="HTML"
         )
 
     aste[asta_id]["msg_id"] = msg.message_id
 
 
 async def offerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message.reply_to_message:
+    reply = update.message.reply_to_message
+    if not reply:
         return
 
     importo = estrai_importo(update.message.text)
     if importo is None:
         return
 
-    reply_id = update.message.reply_to_message.message_id
-
     for a in aste.values():
-        if a["msg_id"] != reply_id:
+        if a["msg_id"] != reply.message_id:
             continue
 
         if a["fine"] and datetime.now() > a["fine"]:
@@ -124,14 +123,14 @@ async def offerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 chat_id=a["chat_id"],
                 message_id=a["msg_id"],
                 caption=format_asta(a),
-                parse_mode="Markdown"
+                parse_mode="HTML"
             )
         else:
             await context.bot.edit_message_text(
                 chat_id=a["chat_id"],
                 message_id=a["msg_id"],
                 text=format_asta(a),
-                parse_mode="Markdown"
+                parse_mode="HTML"
             )
         return
 
@@ -144,16 +143,16 @@ async def chiudi_asta(asta_id, context):
         return
 
     testo = (
-        f"🏁 *Asta #{a['id']} chiusa*\n"
+        f"🏁 <b>Asta #{a['id']} chiusa</b>\n"
         f"📦 {a['oggetto']}\n"
-        f"💰 Prezzo finale: *{a['prezzo']}€*\n"
+        f"💰 Prezzo finale: <b>{a['prezzo']}€</b>\n"
         f"👤 Vincitore: {a['offerente'] or 'nessuno'}"
     )
 
     await context.bot.send_message(
         chat_id=a["chat_id"],
         text=testo,
-        parse_mode="Markdown"
+        parse_mode="HTML"
     )
 
     del aste[asta_id]
@@ -169,18 +168,17 @@ async def shop(update: Update, context: ContextTypes.DEFAULT_TYPE):
         stato = "ATTIVA" if a["attiva"] else "IN ATTESA"
         righe.append(f"#{a['id']} • {a['oggetto']} • {a['prezzo']}€ • {stato}")
 
-    await update.message.reply_text("🛒 *SHOP*\n" + "\n".join(righe), parse_mode="Markdown")
+    await update.message.reply_text(
+        "🛒 <b>SHOP</b>\n" + "\n".join(righe),
+        parse_mode="HTML"
+    )
 
 
 app = ApplicationBuilder().token(TOKEN).build()
 
 app.add_handler(CommandHandler("start", start))
 app.add_handler(CommandHandler("shop", shop))
-
-# VENDITA: testo + foto
 app.add_handler(MessageHandler(filters.ALL, vendita))
-
-# OFFERTE: reply a qualsiasi messaggio
-app.add_handler(MessageHandler(filters.REPLY, offerta))
+app.add_handler(MessageHandler(filters.TEXT & filters.REPLY, offerta))
 
 app.run_polling()
