@@ -11,7 +11,6 @@ from telegram.ext import (
 
 BOT_TOKEN = "7998174738:AAHChHqy0hicxVPr5kWZ5xf61T-akl1bCYw"
 
-# aste attive
 aste = {}
 next_asta_id = 1
 
@@ -28,7 +27,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "👋 Bot aste attivo\n"
         "Usa #vendita nome prezzo\n"
-        "E rispondi all’asta con un numero per fare un’offerta"
+        "Poi rispondi al messaggio dell’asta con un numero"
     )
 
 
@@ -36,9 +35,9 @@ async def nuova_vendita(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global next_asta_id
 
     msg = update.message
-    testo = msg.caption if msg.photo else msg.text
+    testo = msg.caption if msg.caption else msg.text
 
-    if not testo:
+    if not testo or not testo.lower().startswith("#vendita"):
         return
 
     parti = testo.split()
@@ -57,8 +56,8 @@ async def nuova_vendita(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "nome": nome,
         "prezzo": prezzo_base,
         "venditore": msg.from_user,
-        "messaggio_id": None,
         "chat_id": msg.chat_id,
+        "messaggio_id": None,
         "fine": time.time() + 86400,
     }
 
@@ -70,7 +69,10 @@ async def nuova_vendita(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     if msg.photo:
-        sent = await msg.reply_photo(msg.photo[-1].file_id, caption=testo_asta)
+        sent = await msg.reply_photo(
+            photo=msg.photo[-1].file_id,
+            caption=testo_asta
+        )
     else:
         sent = await msg.reply_text(testo_asta)
 
@@ -80,7 +82,6 @@ async def nuova_vendita(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def offerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
 
-    # deve essere una risposta
     if not msg.reply_to_message:
         return
 
@@ -125,13 +126,23 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("shop", shop))
 
+    # TESTO
     app.add_handler(
         MessageHandler(
-            filters.Regex(r"^#vendita") & (filters.TEXT | filters.PHOTO),
+            filters.TEXT & filters.Regex(r"^#vendita"),
             nuova_vendita,
         )
     )
 
+    # FOTO CON DIDASCALIA
+    app.add_handler(
+        MessageHandler(
+            filters.PHOTO & filters.CaptionRegex(r"^#vendita"),
+            nuova_vendita,
+        )
+    )
+
+    # OFFERTE (reply)
     app.add_handler(
         MessageHandler(
             filters.TEXT & filters.REPLY,
