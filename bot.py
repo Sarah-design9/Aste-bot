@@ -11,7 +11,7 @@ from telegram.ext import (
     filters,
 )
 
-TOKEN = "INSERISCI_QUI_IL_TUO_TOKEN"
+TOKEN = "7998174738:AAHChHqy0hicxVPr5kWZ5xf61T-akl1bCYw"
 DURATA_ASTA_ORE = 24
 
 logging.basicConfig(level=logging.INFO)
