@@ -1,7 +1,5 @@
 import logging
 import re
-from datetime import datetime, timedelta
-
 from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
@@ -12,142 +10,61 @@ from telegram.ext import (
 )
 
 TOKEN = "7998174738:AAHChHqy0hicxVPr5kWZ5xf61T-akl1bCYw"
-DURATA_ASTA_ORE = 24
 
 logging.basicConfig(level=logging.INFO)
 
-aste = {}
-next_id = 1
+
+# ================= START =================
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("✅ Bot attivo e funzionante")
 
 
-def render_asta(a):
-    fine = (
-        "⏳ Parte alla prima offerta"
-        if a["fine"] is None
-        else a["fine"].strftime("%d/%m %H:%M")
-    )
-
-    stato = "🟢 ATTIVA" if a["attiva"] else "🔴 CHIUSA"
-
-    return (
-        f"📦 {a['titolo']}\n"
-        f"💰 Base d’asta: {a['base']}€\n"
-        f"🔥 Offerta attuale: {a['attuale']}€\n"
-        f"⏰ Fine: {fine}\n"
-        f"{stato}\n\n"
-        f"👉 Rispondi con un importo per offrire"
-    )
-
-
-# ================= SHOP =================
-async def shop(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    attive = [a for a in aste.values() if a["attiva"]]
-    if not attive:
-        await update.message.reply_text("❌ Nessuna asta disponibile")
+# ================= VENDITA =================
+async def vendita(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.message
+    if not msg:
         return
 
-    testo = "🛒 ASTE ATTIVE\n\n"
-    for a in attive:
-        testo += f"#{a['id']} – {a['titolo']} | 💰 {a['attuale']}€\n"
-
-    await update.message.reply_text(testo)
-
-
-# ================= HANDLER UNICO =================
-async def gestore(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global next_id
-    msg = update.message
-
-    # ================= OFFERTA =================
-    if msg.reply_to_message and msg.text:
-        valore_raw = re.sub(r"[^\d]", "", msg.text)
-        if valore_raw:
-            valore = int(valore_raw)
-
-            for asta in aste.values():
-                if asta["message_id"] == msg.reply_to_message.message_id and asta["attiva"]:
-
-                    if asta["fine"] is None:
-                        asta["fine"] = datetime.now() + timedelta(hours=DURATA_ASTA_ORE)
-
-                    if datetime.now() > asta["fine"]:
-                        asta["attiva"] = False
-                        return
-
-                    if valore <= asta["attuale"]:
-                        return
-
-                    asta["attuale"] = valore
-                    nuovo_testo = render_asta(asta)
-
-                    # 🔁 TENTATIVO EDIT
-                    try:
-                        await context.bot.edit_message_caption(
-                            chat_id=asta["chat_id"],
-                            message_id=asta["message_id"],
-                            caption=nuovo_testo,
-                        )
-                    except:
-                        try:
-                            await context.bot.edit_message_text(
-                                chat_id=asta["chat_id"],
-                                message_id=asta["message_id"],
-                                text=nuovo_testo,
-                            )
-                        except:
-                            # ✅ FALLBACK SICURO (MAI SILENZIO)
-                            await msg.reply_text(
-                                f"✅ Nuova offerta registrata: {valore}€"
-                            )
-                    return
-
-    # ================= VENDITA =================
     testo = msg.caption if msg.photo else msg.text
-    if not testo or not testo.lower().startswith("#vendita"):
+    if not testo:
+        return
+
+    if not testo.lower().startswith("#vendita"):
         return
 
     parti = testo.split()
     if len(parti) < 3:
+        await msg.reply_text("❌ Usa: #vendita nome prezzo")
         return
 
     titolo = " ".join(parti[1:-1])
-    base_raw = re.sub(r"[^\d]", "", parti[-1])
-    if not base_raw:
+    prezzo = re.sub(r"[^\d]", "", parti[-1])
+    if not prezzo:
+        await msg.reply_text("❌ Prezzo non valido")
         return
 
-    base = int(base_raw)
-
-    asta = {
-        "id": next_id,
-        "titolo": titolo,
-        "base": base,
-        "attuale": base,
-        "chat_id": msg.chat_id,
-        "message_id": None,
-        "attiva": True,
-        "fine": None,
-    }
-
-    testo_asta = render_asta(asta)
+    risposta = (
+        f"📦 {titolo}\n"
+        f"💰 Base d’asta: {prezzo}€\n\n"
+        f"✅ Asta creata correttamente"
+    )
 
     if msg.photo:
-        sent = await msg.reply_photo(
+        await msg.reply_photo(
             photo=msg.photo[-1].file_id,
-            caption=testo_asta,
+            caption=risposta,
         )
     else:
-        sent = await msg.reply_text(testo_asta)
-
-    asta["message_id"] = sent.message_id
-    aste[next_id] = asta
-    next_id += 1
+        await msg.reply_text(risposta)
 
 
 # ================= MAIN =================
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
-    app.add_handler(CommandHandler("shop", shop))
-    app.add_handler(MessageHandler(filters.ALL, gestore))
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT | filters.PHOTO, vendita))
+
     app.run_polling()
 
 
