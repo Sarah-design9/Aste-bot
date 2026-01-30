@@ -11,10 +11,8 @@ from telegram.ext import (
     filters,
 )
 
-# ================= CONFIG =================
-TOKEN = "7998174738:AAHChHqy0hicxVPr5kWZ5xf61T-akl1bCYw"
+TOKEN = "INSERISCI_QUI_IL_TUO_TOKEN"
 DURATA_ASTA_ORE = 24
-# ==========================================
 
 logging.basicConfig(level=logging.INFO)
 
@@ -24,7 +22,12 @@ next_id = 1
 
 def render_asta(a):
     stato = "🟢 ATTIVA" if a["attiva"] else "🔴 CHIUSA"
-    fine = a["fine"].strftime("%d/%m %H:%M")
+    fine = (
+        a["fine"].strftime("%d/%m %H:%M")
+        if a["fine"]
+        else "⏳ In attesa della prima offerta"
+    )
+
     return (
         f"📦 {a['titolo']}\n"
         f"💰 Base d’asta: {a['base']}€\n"
@@ -41,10 +44,7 @@ async def vendita(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     msg = update.message
     testo = msg.caption if msg.photo else msg.text
-    if not testo:
-        return
-
-    if not testo.lower().startswith("#vendita"):
+    if not testo or not testo.lower().startswith("#vendita"):
         return
 
     parti = testo.split()
@@ -52,12 +52,11 @@ async def vendita(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     titolo = " ".join(parti[1:-1])
-    base = re.sub(r"[^\d]", "", parti[-1])
-    if not base.isdigit():
+    base_raw = re.sub(r"[^\d]", "", parti[-1])
+    if not base_raw.isdigit():
         return
 
-    base = int(base)
-    fine = datetime.now() + timedelta(hours=DURATA_ASTA_ORE)
+    base = int(base_raw)
 
     asta = {
         "id": next_id,
@@ -68,7 +67,8 @@ async def vendita(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "chat_id": msg.chat_id,
         "message_id": None,
         "attiva": True,
-        "fine": fine,
+        "fine": None,          # ⬅️ parte alla prima offerta
+        "has_photo": bool(msg.photo),
     }
 
     testo_asta = render_asta(asta)
@@ -89,28 +89,28 @@ async def vendita(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ================= OFFERTE =================
 async def offerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
-    if not msg.reply_to_message:
+    if not msg.reply_to_message or not msg.text:
         return
 
-    testo = re.sub(r"[^\d]", "", msg.text or "")
-    if not testo.isdigit():
+    valore_raw = re.sub(r"[^\d]", "", msg.text)
+    if not valore_raw.isdigit():
         return
 
-    valore = int(testo)
+    valore = int(valore_raw)
     reply = msg.reply_to_message
 
     asta = None
     for a in aste.values():
-        if (
-            a["message_id"] == reply.message_id
-            and a["chat_id"] == msg.chat_id
-            and a["attiva"]
-        ):
+        if a["message_id"] == reply.message_id and a["attiva"]:
             asta = a
             break
 
     if not asta:
         return
+
+    # prima offerta → avvia il timer
+    if asta["fine"] is None:
+        asta["fine"] = datetime.now() + timedelta(hours=DURATA_ASTA_ORE)
 
     if datetime.now() > asta["fine"]:
         asta["attiva"] = False
@@ -122,16 +122,17 @@ async def offerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
     asta["attuale"] = valore
     nuovo_testo = render_asta(asta)
 
-    if reply.photo:
+    # 🔑 QUI È LA PARTE CHE SISTEMA IL BUG FOTO
+    try:
         await context.bot.edit_message_caption(
-            chat_id=msg.chat_id,
-            message_id=reply.message_id,
+            chat_id=asta["chat_id"],
+            message_id=asta["message_id"],
             caption=nuovo_testo,
         )
-    else:
+    except:
         await context.bot.edit_message_text(
-            chat_id=msg.chat_id,
-            message_id=reply.message_id,
+            chat_id=asta["chat_id"],
+            message_id=asta["message_id"],
             text=nuovo_testo,
         )
 
@@ -147,7 +148,7 @@ async def shop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for a in attive:
         testo += (
             f"#{a['id']} – {a['titolo']}\n"
-            f"💰 {a['attuale']}€ | ⏰ {a['fine'].strftime('%d/%m %H:%M')}\n\n"
+            f"💰 {a['attuale']}€\n\n"
         )
 
     await update.message.reply_text(testo)
@@ -159,7 +160,7 @@ def main():
 
     app.add_handler(CommandHandler("shop", shop))
     app.add_handler(MessageHandler(filters.TEXT | filters.PHOTO, vendita))
-    app.add_handler(MessageHandler(filters.TEXT, offerta))
+    app.add_handler(MessageHandler(filters.TEXT & filters.REPLY, offerta))
 
     app.run_polling()
 
