@@ -65,8 +65,8 @@ def vendita(update: Update, context: CallbackContext):
     global next_id
 
     msg = update.message
-    text = msg.caption if msg.photo else msg.text
-    if not text:
+    testo = msg.caption if msg.photo else msg.text
+    if not testo or "#vendita" not in testo.lower():
         return
 
     m = re.search(r"#vendita\s+(.+?),\s*(\d+)", text, re.IGNORECASE)
@@ -161,7 +161,10 @@ def main():
     dp = updater.dispatcher
 
     dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(MessageHandler(Filters.regex(r"(?i)^#vendita"), vendita))
+    dp.add_handler(MessageHandler(
+        Filterr"text & Filters.regex(r"(?i)^#vendita")) |  Filters.photo,
+        vendita
+    ))
     dp.add_handler(MessageHandler(Filters.reply & Filters.text, offerta))
 
     updater.start_polling()
