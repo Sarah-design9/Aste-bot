@@ -137,7 +137,7 @@ def offerta(update: Update, context: CallbackContext):
         return
 
     # offerta non valida
-    if valore <= asta["attuale"]:
+    if valore < asta["attuale"]:
         return
 
     asta["attuale"] = valore
