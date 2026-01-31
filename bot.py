@@ -17,21 +17,19 @@ aste = {}
 next_id = 1
 
 
-def render_asta(a):
+def testo_asta(a):
     return (
         f"📦 {a['titolo']}\n"
         f"💰 Base d’asta: {a['base']}€\n"
         f"🔥 Offerta attuale: {a['attuale']}€\n\n"
-        f"👉 Rispondi a questo messaggio con un importo"
+        f"👉 Rispondi a QUESTO messaggio con un importo"
     )
 
 
-# ================= START =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("✅ Bot attivo")
+    await update.message.reply_text("✅ Bot attivo e funzionante")
 
 
-# ================= HANDLER =================
 async def gestore(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global next_id
     msg = update.message
@@ -50,24 +48,17 @@ async def gestore(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for asta in aste.values():
             if asta["message_id"] == reply_id:
                 if valore <= asta["attuale"]:
-                    await msg.reply_text("❌ Offerta troppo bassa")
+                    await msg.reply_text(
+                        f"❌ Offerta troppo bassa (attuale: {asta['attuale']}€)"
+                    )
                     return
 
                 asta["attuale"] = valore
-                nuovo_testo = render_asta(asta)
-
-                try:
-                    await context.bot.edit_message_caption(
-                        chat_id=asta["chat_id"],
-                        message_id=asta["message_id"],
-                        caption=nuovo_testo,
-                    )
-                except:
-                    await context.bot.edit_message_text(
-                        chat_id=asta["chat_id"],
-                        message_id=asta["message_id"],
-                        text=nuovo_testo,
-                    )
+                await msg.reply_text(
+                    f"🔥 Nuova offerta valida!\n"
+                    f"📦 {asta['titolo']}\n"
+                    f"💰 Prezzo attuale: {valore}€"
+                )
                 return
 
     # ================= VENDITA =================
@@ -93,26 +84,22 @@ async def gestore(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "titolo": titolo,
         "base": base,
         "attuale": base,
-        "chat_id": msg.chat_id,
         "message_id": None,
     }
-
-    testo_asta = render_asta(asta)
 
     if msg.photo:
         sent = await msg.reply_photo(
             photo=msg.photo[-1].file_id,
-            caption=testo_asta,
+            caption=testo_asta(asta),
         )
     else:
-        sent = await msg.reply_text(testo_asta)
+        sent = await msg.reply_text(testo_asta(asta))
 
     asta["message_id"] = sent.message_id
     aste[next_id] = asta
     next_id += 1
 
 
-# ================= MAIN =================
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
