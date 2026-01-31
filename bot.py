@@ -11,7 +11,7 @@ from telegram.ext import (
     CallbackContext,
 )
 
-TOKEN = "USA_VARIABILE_AMBIENTE"
+TOKEN = "7998174738:AAHChHqy0hicxVPr5kWZ5xf61T-akl1bCYw"
 DURATA_ASTA_ORE = 24
 
 logging.basicConfig(level=logging.INFO)
