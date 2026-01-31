@@ -11,7 +11,6 @@ from telegram.ext import (
     CallbackContext,
 )
 
-# ================= CONFIG =================
 TOKEN = "7998174738:AAHChHqy0hicxVPr5kWZ5xf61T-akl1bCYw"
 DURATA_ASTA_ORE = 24
 
@@ -35,29 +34,80 @@ def render_asta(a):
         f"🔥 Offerta attuale: {a['attuale']}€\n"
         f"⏰ Fine asta: {fine_txt}\n"
         f"{stato}\n\n"
-        f"👉 Rispondi a questo messaggio con un importo (es: 10 o 10€)"
+        f"👉 Rispondi a questo messaggio con un importo"
     )
 
 # ================= START =================
 def start(update: Update, context: CallbackContext):
-    update.message.reply_text(
-        "🤖 BOT ATTIVO\n\n"
-        "Per mettere in vendita:\n"
-        "#vendita Nome oggetto prezzo\n\n"
-        "Esempio:\n"
-        "#vendita Gioco PS5 20"
-    )
+    update.message.reply_text("🤖 Bot aste attivo")
+
+# ================= OFFERTE =================
+def offerta(update: Update, context: CallbackContext):
+    msg = update.message
+
+    if not msg.reply_to_message or not msg.text:
+        return
+
+    valore_raw = re.sub(r"[^\d]", "", msg.text)
+    if not valore_raw.isdigit():
+        return
+
+    valore = int(valore_raw)
+    reply_id = msg.reply_to_message.message_id
+
+    asta = None
+    for a in aste.values():
+        if a["message_id"] == reply_id and a["attiva"]:
+            asta = a
+            break
+
+    if not asta:
+        return
+
+    # prima offerta → avvia timer
+    if asta["fine"] is None:
+        asta["fine"] = datetime.now() + timedelta(hours=DURATA_ASTA_ORE)
+
+    # asta scaduta
+    if datetime.now() > asta["fine"]:
+        asta["attiva"] = False
+        return
+
+    # offerta valida (>= base)
+    if valore < asta["attuale"]:
+        return
+
+    asta["attuale"] = valore
+    nuovo_testo = render_asta(asta)
+
+    try:
+        if asta["foto"]:
+            context.bot.edit_message_caption(
+                chat_id=asta["chat_id"],
+                message_id=asta["message_id"],
+                caption=nuovo_testo
+            )
+        else:
+            context.bot.edit_message_text(
+                chat_id=asta["chat_id"],
+                message_id=asta["message_id"],
+                text=nuovo_testo
+            )
+    except Exception as e:
+        logging.error(e)
 
 # ================= VENDITA =================
 def vendita(update: Update, context: CallbackContext):
     global next_id
 
     msg = update.message
-    testo = msg.caption if msg.photo else msg.text
-    if not testo:
+
+    # ❗ IGNORA I REPLY (importantissimo)
+    if msg.reply_to_message:
         return
 
-    if not testo.lower().startswith("#vendita"):
+    testo = msg.caption if msg.photo else msg.text
+    if not testo or not testo.lower().startswith("#vendita"):
         return
 
     parti = testo.split()
@@ -86,90 +136,28 @@ def vendita(update: Update, context: CallbackContext):
 
     testo_asta = render_asta(asta)
 
-    try:
-        if msg.photo:
-            sent = msg.reply_photo(
-                photo=msg.photo[-1].file_id,
-                caption=testo_asta
-            )
-        else:
-            sent = msg.reply_text(testo_asta)
-    except Exception as e:
-        logging.error(f"Errore invio asta: {e}")
-        return
+    if msg.photo:
+        sent = msg.reply_photo(
+            photo=msg.photo[-1].file_id,
+            caption=testo_asta
+        )
+    else:
+        sent = msg.reply_text(testo_asta)
 
     asta["message_id"] = sent.message_id
     aste[next_id] = asta
     next_id += 1
 
-# ================= OFFERTE =================
-def offerta(update: Update, context: CallbackContext):
-    msg = update.message
-    if not msg.reply_to_message:
-        return
-
-    if not msg.text:
-        return
-
-    valore_raw = re.sub(r"[^\d]", "", msg.text)
-    if not valore_raw.isdigit():
-        return
-
-    valore = int(valore_raw)
-    reply_id = msg.reply_to_message.message_id
-
-    asta = None
-    for a in aste.values():
-        if a["message_id"] == reply_id and a["attiva"]:
-            asta = a
-            break
-
-    if not asta:
-        return
-
-    # prima offerta → avvia timer
-    if asta["fine"] is None:
-        asta["fine"] = datetime.now() + timedelta(hours=DURATA_ASTA_ORE)
-
-    # asta scaduta
-    if datetime.now() > asta["fine"]:
-        asta["attiva"] = False
-        return
-
-    # offerta non valida
-    if valore < asta["attuale"]:
-        return
-
-    asta["attuale"] = valore
-    nuovo_testo = render_asta(asta)
-
-    try:
-        if asta["foto"]:
-            context.bot.edit_message_caption(
-                chat_id=asta["chat_id"],
-                message_id=asta["message_id"],
-                caption=nuovo_testo
-            )
-        else:
-            context.bot.edit_message_text(
-                chat_id=asta["chat_id"],
-                message_id=asta["message_id"],
-                text=nuovo_testo
-            )
-    except Exception as e:
-        logging.error(f"Errore aggiornamento offerta: {e}")
-
 # ================= SHOP =================
 def shop(update: Update, context: CallbackContext):
     attive = [a for a in aste.values() if a["attiva"]]
-
     if not attive:
         update.message.reply_text("❌ Nessuna asta disponibile")
         return
 
     testo = "🛒 ASTE ATTIVE\n\n"
     for a in attive:
-        testo += f"#{a['id']} – {a['titolo']} | 💰 {a['attuale']}€\n"
+        testo += f"{a['titolo']} – {a['attuale']}€\n"
 
     update.message.reply_text(testo)
 
@@ -180,8 +168,10 @@ def main():
 
     dp.add_handler(CommandHandler("start", start))
     dp.add_handler(CommandHandler("shop", shop))
-    dp.add_handler(MessageHandler(Filters.text | Filters.photo, vendita))
+
+    # ⚠️ ORDINE FONDAMENTALE
     dp.add_handler(MessageHandler(Filters.reply, offerta))
+    dp.add_handler(MessageHandler(Filters.text | Filters.photo, vendita))
 
     updater.start_polling()
     updater.idle()
