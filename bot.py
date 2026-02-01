@@ -12,14 +12,10 @@ from telegram.ext import (
     filters,
 )
 
-# ================= CONFIG =================
 TOKEN = os.getenv("BOT_TOKEN")
 DURATA_ASTA_ORE = 24
 
-logging.basicConfig(
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    level=logging.INFO,
-)
+logging.basicConfig(level=logging.INFO)
 
 aste = {}
 next_id = 1
@@ -35,12 +31,17 @@ def render_asta(a):
 
     return (
         f"📦 {a['titolo']}\n"
+        f"🆔 Asta #{a['id']}\n"
         f"💰 Base d’asta: {a['base']}€\n"
         f"🔥 Offerta attuale: {a['attuale']}€\n"
         f"⏰ Fine: {fine_txt}\n"
         f"{stato}\n\n"
         f"👉 Rispondi a questo messaggio con un importo"
     )
+
+def estrai_id_asta(testo):
+    m = re.search(r"Asta #(\d+)", testo)
+    return int(m.group(1)) if m else None
 
 # ================= START =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -78,7 +79,6 @@ async def vendita(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "base": base,
         "attuale": base,
         "chat_id": msg.chat_id,
-        "message_id": None,
         "attiva": True,
         "fine": None,
     }
@@ -93,7 +93,6 @@ async def vendita(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         sent = await msg.reply_text(testo_asta)
 
-    asta["message_id"] = sent.message_id
     aste[next_id] = asta
     next_id += 1
 
@@ -109,13 +108,22 @@ async def offerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     valore = int(valore_raw)
 
-    asta = None
-    for a in aste.values():
-        if a["message_id"] == msg.reply_to_message.message_id and a["attiva"]:
-            asta = a
-            break
+    testo_risposto = (
+        msg.reply_to_message.caption
+        if msg.reply_to_message.caption
+        else msg.reply_to_message.text
+    )
 
-    if not asta:
+    if not testo_risposto:
+        return
+
+    id_asta = estrai_id_asta(testo_risposto)
+    if not id_asta or id_asta not in aste:
+        return
+
+    asta = aste[id_asta]
+
+    if not asta["attiva"]:
         return
 
     if asta["fine"] is None:
@@ -129,14 +137,14 @@ async def offerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         await context.bot.edit_message_caption(
-            chat_id=asta["chat_id"],
-            message_id=asta["message_id"],
+            chat_id=msg.chat_id,
+            message_id=msg.reply_to_message.message_id,
             caption=nuovo_testo,
         )
     except:
         await context.bot.edit_message_text(
-            chat_id=asta["chat_id"],
-            message_id=asta["message_id"],
+            chat_id=msg.chat_id,
+            message_id=msg.reply_to_message.message_id,
             text=nuovo_testo,
         )
 
@@ -149,14 +157,14 @@ async def shop(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     testo = "🛒 ASTE ATTIVE\n\n"
     for a in attive:
-        testo += f"{a['titolo']} – {a['attuale']}€\n"
+        testo += f"#{a['id']} – {a['titolo']} | {a['attuale']}€\n"
 
     await update.message.reply_text(testo)
 
 # ================= MAIN =================
 def main():
     if not TOKEN:
-        raise RuntimeError("BOT_TOKEN non trovato nelle Variables")
+        raise RuntimeError("BOT_TOKEN mancante")
 
     app = ApplicationBuilder().token(TOKEN).build()
 
