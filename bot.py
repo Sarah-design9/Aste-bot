@@ -1,4 +1,5 @@
 import logging
+import os
 import re
 from datetime import datetime, timedelta
 
@@ -12,6 +13,7 @@ from telegram.ext import (
 )
 
 # ================= CONFIG =================
+TOKEN = os.getenv("BOT_TOKEN")
 DURATA_ASTA_ORE = 24
 
 logging.basicConfig(
@@ -37,7 +39,17 @@ def render_asta(a):
         f"🔥 Offerta attuale: {a['attuale']}€\n"
         f"⏰ Fine: {fine_txt}\n"
         f"{stato}\n\n"
-        f"👉 Rispondi a questo messaggio con un importo per offrire"
+        f"👉 Rispondi a questo messaggio con un importo"
+    )
+
+# ================= START =================
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "👋 Ciao!\n\n"
+        "Per creare un’asta:\n"
+        "#vendita NOME PREZZO\n\n"
+        "Esempio:\n"
+        "#vendita Orologio 50€"
     )
 
 # ================= VENDITA =================
@@ -46,11 +58,7 @@ async def vendita(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     msg = update.message
     testo = msg.caption if msg.photo else msg.text
-    if not testo:
-        return
-
-    testo_low = testo.lower()
-    if not testo_low.startswith("#vendita"):
+    if not testo or not testo.lower().startswith("#vendita"):
         return
 
     parti = testo.split()
@@ -77,17 +85,13 @@ async def vendita(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     testo_asta = render_asta(asta)
 
-    try:
-        if msg.photo:
-            sent = await msg.reply_photo(
-                photo=msg.photo[-1].file_id,
-                caption=testo_asta,
-            )
-        else:
-            sent = await msg.reply_text(testo_asta)
-    except Exception as e:
-        logging.error(f"Errore invio asta: {e}")
-        return
+    if msg.photo:
+        sent = await msg.reply_photo(
+            photo=msg.photo[-1].file_id,
+            caption=testo_asta,
+        )
+    else:
+        sent = await msg.reply_text(testo_asta)
 
     asta["message_id"] = sent.message_id
     aste[next_id] = asta
@@ -96,7 +100,6 @@ async def vendita(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ================= OFFERTE =================
 async def offerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
-
     if not msg.reply_to_message or not msg.text:
         return
 
@@ -115,16 +118,9 @@ async def offerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not asta:
         return
 
-    # prima offerta -> parte il timer
     if asta["fine"] is None:
         asta["fine"] = datetime.now() + timedelta(hours=DURATA_ASTA_ORE)
 
-    # asta scaduta
-    if datetime.now() > asta["fine"]:
-        asta["attiva"] = False
-        return
-
-    # offerta non valida
     if valore <= asta["attuale"]:
         return
 
@@ -138,61 +134,36 @@ async def offerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
             caption=nuovo_testo,
         )
     except:
-        try:
-            await context.bot.edit_message_text(
-                chat_id=asta["chat_id"],
-                message_id=asta["message_id"],
-                text=nuovo_testo,
-            )
-        except Exception as e:
-            logging.error(f"Errore update offerta: {e}")
+        await context.bot.edit_message_text(
+            chat_id=asta["chat_id"],
+            message_id=asta["message_id"],
+            text=nuovo_testo,
+        )
 
 # ================= SHOP =================
 async def shop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     attive = [a for a in aste.values() if a["attiva"]]
-
     if not attive:
         await update.message.reply_text("❌ Nessuna asta disponibile")
         return
 
     testo = "🛒 ASTE ATTIVE\n\n"
     for a in attive:
-        testo += f"#{a['id']} – {a['titolo']} | 💰 {a['attuale']}€\n"
+        testo += f"{a['titolo']} – {a['attuale']}€\n"
 
     await update.message.reply_text(testo)
 
-# ================= START =================
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "👋 Ciao!\n\n"
-        "Per creare un’asta:\n"
-        "#vendita NOME PREZZO\n\n"
-        "Esempio:\n"
-        "#vendita Orologio 50€"
-    )
-
 # ================= MAIN =================
 def main():
-    app = ApplicationBuilder().token(
-        context.bot_data["BOT_TOKEN"] if "BOT_TOKEN" in context.bot_data else None
-    ).build()
+    if not TOKEN:
+        raise RuntimeError("BOT_TOKEN non trovato nelle Variables")
+
+    app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("shop", shop))
-
-    app.add_handler(
-        MessageHandler(
-            (filters.TEXT | filters.PHOTO),
-            vendita,
-        )
-    )
-
-    app.add_handler(
-        MessageHandler(
-            filters.TEXT & filters.REPLY,
-            offerta,
-        )
-    )
+    app.add_handler(MessageHandler(filters.TEXT | filters.PHOTO, vendita))
+    app.add_handler(MessageHandler(filters.TEXT & filters.REPLY, offerta))
 
     app.run_polling()
 
