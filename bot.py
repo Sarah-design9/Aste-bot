@@ -34,14 +34,8 @@ def render_asta(a):
         f"💰 Base d’asta: {a['base']}€\n"
         f"🔥 Offerta attuale: {a['attuale']}€\n"
         f"⏰ Fine: {fine_txt}\n\n"
-        f"👉 Rispondi a questo messaggio con un importo"
+        f"👉 Rispondi a QUESTO messaggio con un importo"
     )
-
-def estrai_id(testo):
-    if not testo:
-        return None
-    m = re.search(r"Asta #(\d+)", testo)
-    return int(m.group(1)) if m else None
 
 # ================= START =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -95,7 +89,7 @@ async def vendita(update: Update, context: ContextTypes.DEFAULT_TYPE):
         sent = await msg.reply_text(testo_asta)
 
     asta["message_id"] = sent.message_id
-    aste[next_id] = asta
+    aste[(asta["chat_id"], asta["message_id"])] = asta
     next_id += 1
 
 # ================= OFFERTE =================
@@ -109,16 +103,13 @@ async def offerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     valore = int(valore_raw)
 
-    replied = msg.reply_to_message
-    testo_risposto = replied.caption if replied.caption else replied.text
-    id_asta = estrai_id(testo_risposto)
-
-    if not id_asta or id_asta not in aste:
+    key = (msg.chat_id, msg.reply_to_message.message_id)
+    if key not in aste:
         return
 
-    asta = aste[id_asta]
+    asta = aste[key]
 
-    # prima offerta
+    # PRIMA OFFERTA
     if asta["fine"] is None:
         if valore < asta["base"]:
             return
