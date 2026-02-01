@@ -56,8 +56,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ================= VENDITA =================
 async def vendita(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global next_id
-
     msg = update.message
+
+    # ❗️IGNORA messaggi in risposta (sono offerte)
+    if msg.reply_to_message:
+        return
+
     testo = msg.caption if msg.photo else msg.text
     if not testo or not testo.lower().startswith("#vendita"):
         return
@@ -86,12 +90,9 @@ async def vendita(update: Update, context: ContextTypes.DEFAULT_TYPE):
     testo_asta = render_asta(asta)
 
     if msg.photo:
-        sent = await msg.reply_photo(
-            photo=msg.photo[-1].file_id,
-            caption=testo_asta,
-        )
+        await msg.reply_photo(msg.photo[-1].file_id, caption=testo_asta)
     else:
-        sent = await msg.reply_text(testo_asta)
+        await msg.reply_text(testo_asta)
 
     aste[next_id] = asta
     next_id += 1
@@ -122,7 +123,6 @@ async def offerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     asta = aste[id_asta]
-
     if not asta["attiva"]:
         return
 
@@ -133,6 +133,7 @@ async def offerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     asta["attuale"] = valore
+
     nuovo_testo = render_asta(asta)
 
     try:
@@ -170,8 +171,10 @@ def main():
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("shop", shop))
-    app.add_handler(MessageHandler(filters.TEXT | filters.PHOTO, vendita))
-    app.add_handler(MessageHandler(filters.TEXT & filters.REPLY, offerta))
+
+    # ORDINE CORRETTO + FILTRI CORRETTI
+    app.add_handler(MessageHandler(filters.REPLY & filters.TEXT, offerta))
+    app.add_handler(MessageHandler((filters.TEXT | filters.PHOTO) & ~filters.REPLY, vendita))
 
     app.run_polling()
 
