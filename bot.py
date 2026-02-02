@@ -70,26 +70,35 @@ async def vendita(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     base = int(base_raw)
 
-    asta = {
+    testo_asta = render_asta({
+        "id": next_id,
+        "titolo": titolo,
+        "base": base,
+        "attuale": base,
+        "fine": None,
+    })
+
+    if msg.photo:
+        sent = await msg.reply_photo(
+            msg.photo[-1].file_id,
+            caption=testo_asta
+        )
+        has_caption = True
+    else:
+        sent = await msg.reply_text(testo_asta)
+        has_caption = False
+
+    aste[(msg.chat_id, sent.message_id)] = {
         "id": next_id,
         "titolo": titolo,
         "base": base,
         "attuale": base,
         "chat_id": msg.chat_id,
-        "message_id": None,
-        "con_foto": bool(msg.photo),
+        "message_id": sent.message_id,
+        "has_caption": has_caption,
         "fine": None,
     }
 
-    testo_asta = render_asta(asta)
-
-    if msg.photo:
-        sent = await msg.reply_photo(msg.photo[-1].file_id, caption=testo_asta)
-    else:
-        sent = await msg.reply_text(testo_asta)
-
-    asta["message_id"] = sent.message_id
-    aste[(asta["chat_id"], asta["message_id"])] = asta
     next_id += 1
 
 # ================= OFFERTE =================
@@ -122,7 +131,7 @@ async def offerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
     nuovo_testo = render_asta(asta)
 
     try:
-        if asta["con_foto"]:
+        if asta["has_caption"]:
             await context.bot.edit_message_caption(
                 chat_id=asta["chat_id"],
                 message_id=asta["message_id"],
@@ -135,7 +144,7 @@ async def offerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 text=nuovo_testo,
             )
     except Exception as e:
-        logging.error(f"Aggiornamento fallito: {e}")
+        logging.error(f"Errore aggiornamento asta: {e}")
 
 # ================= SHOP =================
 async def shop(update: Update, context: ContextTypes.DEFAULT_TYPE):
