@@ -52,9 +52,6 @@ async def vendita(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global next_id
     msg = update.message
 
-    if msg.reply_to_message:
-        return
-
     testo = msg.caption if msg.photo else msg.text
     if not testo or not testo.lower().startswith("#vendita"):
         return
@@ -104,13 +101,16 @@ async def vendita(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ================= OFFERTE =================
 async def offerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
-    if not msg.reply_to_message or not msg.text:
-        return
 
-    valore_raw = re.sub(r"[^\d]", "", msg.text)
-    if not valore_raw.isdigit():
+    # 🔒 BLOCCO TOTALE ANTI-CRASH
+    if not msg.reply_to_message:
         return
-    valore = int(valore_raw)
+    if not msg.text:
+        return  # sticker, foto, emoji, audio → ignorati
+    if not re.search(r"\d", msg.text):
+        return  # niente numeri → ignorato
+
+    valore = int(re.sub(r"[^\d]", "", msg.text))
 
     key = (msg.chat_id, msg.reply_to_message.message_id)
     if key not in aste:
@@ -167,8 +167,8 @@ def main():
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("shop", shop))
-    app.add_handler(MessageHandler(filters.REPLY & filters.TEXT, offerta))
-    app.add_handler(MessageHandler((filters.TEXT | filters.PHOTO) & ~filters.REPLY, vendita))
+    app.add_handler(MessageHandler(filters.REPLY, offerta))
+    app.add_handler(MessageHandler(filters.TEXT | filters.PHOTO, vendita))
 
     app.run_polling()
 
