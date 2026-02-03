@@ -1,6 +1,7 @@
 import logging
 import re
 from datetime import datetime, timedelta
+import os
 
 from telegram import Update
 from telegram.ext import (
@@ -11,52 +12,44 @@ from telegram.ext import (
     filters,
 )
 
-# ================= CONFIG =================
 DURATA_ASTA_ORE = 24
 
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO,
-)
+logging.basicConfig(level=logging.INFO)
 
 aste = {}
 next_id = 1
 
 
-# ================= RENDER ASTA =================
+# ================= RENDER =================
 def render_asta(a):
     stato = "🟢 ATTIVA" if a["attiva"] else "🔴 CHIUSA"
 
-    if a["fine"] is None:
-        fine_text = "⏳ Parte alla prima offerta"
-    else:
-        fine_text = a["fine"].strftime("%d/%m %H:%M")
+    fine = (
+        "⏳ Parte alla prima offerta"
+        if a["fine"] is None
+        else a["fine"].strftime("%d/%m %H:%M")
+    )
 
     return (
         f"📦 {a['titolo']}\n"
         f"💰 Base d’asta: {a['base']}€\n"
         f"🔥 Offerta attuale: {a['attuale']}€\n"
-        f"⏰ Fine asta: {fine_text}\n"
+        f"⏰ Fine asta: {fine}\n"
         f"{stato}\n\n"
-        f"👉 Rispondi con un importo per fare un’offerta"
+        f"👉 Rispondi con un importo per offrire"
     )
 
 
 # ================= VENDITA =================
 async def vendita(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global next_id
-
     msg = update.message
 
-    # ❌ NON deve essere una risposta
     if msg.reply_to_message:
         return
 
     testo = msg.caption if msg.photo else msg.text
-    if not testo:
-        return
-
-    if not testo.lower().startswith("#vendita"):
+    if not testo or not testo.lower().startswith("#vendita"):
         return
 
     parti = testo.split()
@@ -64,7 +57,6 @@ async def vendita(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     titolo = " ".join(parti[1:-1])
-
     base_raw = re.sub(r"[^\d]", "", parti[-1])
     if not base_raw.isdigit():
         return
@@ -101,10 +93,7 @@ async def vendita(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def offerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
 
-    if not msg.reply_to_message:
-        return
-
-    if not msg.text:
+    if not msg.reply_to_message or not msg.text:
         return
 
     valore_raw = re.sub(r"[^\d]", "", msg.text)
@@ -112,7 +101,6 @@ async def offerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     valore = int(valore_raw)
-
     reply_id = msg.reply_to_message.message_id
 
     asta = None
@@ -124,21 +112,25 @@ async def offerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not asta:
         return
 
-    # Prima offerta → parte il timer
+    # ===== PRIMA OFFERTA =====
     if asta["fine"] is None:
+        if valore < asta["base"]:
+            await msg.reply_text("❌ L’offerta deve essere almeno la base d’asta")
+            return
+
         asta["fine"] = datetime.now() + timedelta(hours=DURATA_ASTA_ORE)
+        asta["attuale"] = valore
 
-    # Asta scaduta
-    if datetime.now() > asta["fine"]:
-        asta["attiva"] = False
-        return
+    # ===== OFFERTE SUCCESSIVE =====
+    else:
+        if valore <= asta["attuale"]:
+            await msg.reply_text(
+                f"❌ Offerta troppo bassa. Attuale: {asta['attuale']}€"
+            )
+            return
 
-    # Offerta non valida
-    if valore <= asta["attuale"]:
-        return
+        asta["attuale"] = valore
 
-    # Aggiorna prezzo
-    asta["attuale"] = valore
     nuovo_testo = render_asta(asta)
 
     try:
@@ -172,11 +164,8 @@ async def shop(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ================= MAIN =================
 def main():
-    app = ApplicationBuilder().token(
-        __import__("os").environ["BOT_TOKEN"]
-    ).build()
+    app = ApplicationBuilder().token(os.environ["BOT_TOKEN"]).build()
 
-    # ⚠️ ORDINE CORRETTO (FONDAMENTALE)
     app.add_handler(MessageHandler(filters.TEXT & filters.REPLY, offerta))
     app.add_handler(CommandHandler("shop", shop))
     app.add_handler(MessageHandler(filters.TEXT | filters.PHOTO, vendita))
