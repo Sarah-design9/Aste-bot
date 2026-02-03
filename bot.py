@@ -15,7 +15,7 @@ from telegram.ext import (
 # ================= CONFIG =================
 TOKEN = os.getenv("BOT_TOKEN")
 if not TOKEN:
-    raise RuntimeError("BOT_TOKEN mancante su Railway")
+    raise RuntimeError("BOT_TOKEN mancante")
 
 logging.basicConfig(level=logging.INFO)
 
@@ -25,13 +25,13 @@ ASTE = {}  # key = message_id del messaggio del BOT
 def estrai_prezzo(testo: str):
     if not testo:
         return None
-    m = re.search(r"\b(\d+)\b", testo)
+    m = re.search(r"(\d+)", testo)
     return int(m.group(1)) if m else None
 
 
 def testo_asta(a):
     testo = (
-        f"📦 ASTA ATTIVA\n\n"
+        f"📦 ASTA\n\n"
         f"💰 Base d'asta: {a['base']} €\n"
         f"🔥 Offerta attuale: {a['attuale']} €\n"
     )
@@ -41,19 +41,14 @@ def testo_asta(a):
     else:
         testo += "⏳ Fine asta: alla prima offerta\n"
 
-    testo += "\n✍️ Rispondi a QUESTO messaggio con l'importo"
+    testo += "\n✍️ Rispondi a QUESTO messaggio con un importo"
     return testo
 
 # ================= START =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "🤖 Bot aste attivo\n\n"
-        "#vendita nome-oggetto prezzo\n"
-        "(foto opzionale)\n\n"
-        "Le offerte devono essere RISPOSTE al messaggio dell’asta."
-    )
+    await update.message.reply_text("🤖 Bot aste attivo")
 
-# ================= VENDITA (TESTO) =================
+# ================= VENDITA TESTO =================
 async def vendita_testo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
     if not msg.text or "#vendita" not in msg.text.lower():
@@ -72,10 +67,9 @@ async def vendita_testo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     bot_msg = await msg.reply_text(testo_asta(asta))
     ASTE[bot_msg.message_id] = asta
-
     logging.info("Vendita senza foto creata")
 
-# ================= VENDITA (FOTO) =================
+# ================= VENDITA FOTO =================
 async def vendita_foto(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
     if not msg.caption or "#vendita" not in msg.caption.lower():
@@ -100,18 +94,18 @@ async def vendita_foto(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ASTE[bot_msg.message_id] = asta
     logging.info("Vendita con foto creata")
 
-# ================= OFFERTE =================
+# ================= OFFERTE (SENZA FILTRI) =================
 async def offerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
-
-    if not msg.reply_to_message:
+    if not msg or not msg.reply_to_message:
         return
 
     asta = ASTE.get(msg.reply_to_message.message_id)
     if not asta:
         return
 
-    prezzo = estrai_prezzo(msg.text)
+    testo = msg.text or msg.caption
+    prezzo = estrai_prezzo(testo)
     if prezzo is None:
         return
 
@@ -130,17 +124,16 @@ async def offerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text=testo_asta(asta)
     )
 
-    logging.info(f"Nuova offerta valida: {prezzo}")
+    logging.info(f"Nuova offerta: {prezzo}")
 
 # ================= MAIN =================
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-
     app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.GROUPS, vendita_testo))
     app.add_handler(MessageHandler(filters.PHOTO & filters.ChatType.GROUPS, vendita_foto))
-    app.add_handler(MessageHandler(filters.TEXT & filters.REPLY & filters.ChatType.GROUPS, offerta))
+    app.add_handler(MessageHandler(filters.ALL & filters.ChatType.GROUPS, offerta))
 
     app.run_polling(drop_pending_updates=True)
 
