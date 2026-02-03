@@ -1,7 +1,7 @@
 import logging
 import re
-from datetime import datetime, timedelta
 import os
+from datetime import datetime, timedelta
 
 from telegram import Update
 from telegram.ext import (
@@ -42,9 +42,9 @@ def render_asta(a):
 
 # ================= VENDITA =================
 async def vendita(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global next_id
     msg = update.message
 
+    # 🔴 MAI intercettare le risposte
     if msg.reply_to_message:
         return
 
@@ -63,6 +63,7 @@ async def vendita(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     base = int(base_raw)
 
+    global next_id
     asta = {
         "id": next_id,
         "titolo": titolo,
@@ -98,6 +99,7 @@ async def offerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     valore_raw = re.sub(r"[^\d]", "", msg.text)
     if not valore_raw.isdigit():
+        await msg.reply_text("❌ Inserisci solo numeri")
         return
 
     valore = int(valore_raw)
@@ -112,10 +114,18 @@ async def offerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not asta:
         return
 
+    # ⛔ ASTA SCADUTA
+    if asta["fine"] and datetime.now() > asta["fine"]:
+        asta["attiva"] = False
+        await msg.reply_text("⏰ Asta terminata")
+        return
+
     # ===== PRIMA OFFERTA =====
     if asta["fine"] is None:
         if valore < asta["base"]:
-            await msg.reply_text("❌ L’offerta deve essere almeno la base d’asta")
+            await msg.reply_text(
+                f"❌ Offerta troppo bassa. Base: {asta['base']}€"
+            )
             return
 
         asta["fine"] = datetime.now() + timedelta(hours=DURATA_ASTA_ORE)
@@ -166,6 +176,7 @@ async def shop(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     app = ApplicationBuilder().token(os.environ["BOT_TOKEN"]).build()
 
+    # ⚠️ ORDINE FONDAMENTALE
     app.add_handler(MessageHandler(filters.TEXT & filters.REPLY, offerta))
     app.add_handler(CommandHandler("shop", shop))
     app.add_handler(MessageHandler(filters.TEXT | filters.PHOTO, vendita))
