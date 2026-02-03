@@ -1,6 +1,6 @@
 import os
-import logging
 import re
+import logging
 from datetime import datetime, timedelta
 
 from telegram import Update
@@ -14,139 +14,117 @@ from telegram.ext import (
 
 # ---------------- CONFIG ----------------
 TOKEN = os.getenv("BOT_TOKEN")
-
 if not TOKEN:
-    raise RuntimeError("BOT_TOKEN non trovato nelle variabili d'ambiente")
+    raise RuntimeError("BOT_TOKEN mancante su Railway")
 
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO,
-)
+logging.basicConfig(level=logging.INFO)
 
-# ---------------- DATA ----------------
-# auctions[message_id] = {
-#   chat_id, base_price, current_price,
-#   end_time, bot_message_id
-# }
+# auctions[bot_message_id] = {...}
 auctions = {}
 
-# ---------------- HELPERS ----------------
+# ---------------- UTILS ----------------
 def parse_price(text: str):
-    """
-    Accetta:
-    10
-    10€
-    10 €
-    """
-    match = re.search(r"(\d+)", text)
+    match = re.search(r"\b(\d+)\b", text)
     return int(match.group(1)) if match else None
 
 
-def build_auction_text(base, current, end_time):
+def auction_text(base, current, end):
     return (
         "🟢 **ASTA ATTIVA**\n\n"
         f"💰 **Base d'asta:** {base} €\n"
         f"📈 **Offerta attuale:** {current} €\n"
-        f"⏰ **Fine asta:** {end_time.strftime('%d/%m/%Y %H:%M')}\n\n"
-        "✍️ Scrivi solo il numero per fare un'offerta"
+        f"⏰ **Fine asta:** {end.strftime('%d/%m/%Y %H:%M')}\n\n"
+        "✍️ Rispondi a questo messaggio con il prezzo"
     )
-
 
 # ---------------- COMMANDS ----------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "👋 Ciao!\n\n"
-        "Per mettere in vendita un oggetto:\n"
-        "• Scrivi `#vendita`\n"
-        "• Aggiungi una foto (opzionale)\n"
-        "• Scrivi nel testo la **base d'asta**\n\n"
-        "Gli utenti devono rispondere al post con il prezzo."
+        "👋 Bot aste attivo!\n\n"
+        "Per vendere:\n"
+        "• scrivi #vendita\n"
+        "• inserisci la base d'asta\n"
+        "• foto opzionale\n\n"
+        "Le offerte devono essere risposte al post dell'asta."
     )
 
 
 async def shop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not auctions:
-        await update.message.reply_text("❌ Nessuna asta disponibile")
+        await update.message.reply_text("❌ Nessuna asta attiva")
         return
 
-    text = "📦 **Aste attive:**\n\n"
+    msg = "📦 **Aste attive:**\n\n"
     for a in auctions.values():
-        text += f"• Base {a['base_price']} € | Attuale {a['current_price']} €\n"
+        msg += f"• {a['current']} € (base {a['base']} €)\n"
 
-    await update.message.reply_text(text)
-
+    await update.message.reply_text(msg)
 
 # ---------------- VENDITA ----------------
 async def handle_sale(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    message = update.message
-    text = message.caption if message.photo else message.text
+    msg = update.message
+    text = msg.caption if msg.photo else msg.text
 
-    if not text or "#vendita" not in text.lower():
+    if not text:
         return
 
-    base_price = parse_price(text)
-    if base_price is None:
-        await message.reply_text("❌ Base d'asta non trovata")
+    if "#vendita" not in text.lower():
         return
 
-    end_time = datetime.now() + timedelta(hours=24)
+    base = parse_price(text)
+    if base is None:
+        await msg.reply_text("❌ Base d'asta non trovata")
+        return
 
-    auction_text = build_auction_text(base_price, base_price, end_time)
+    end = datetime.now() + timedelta(hours=24)
 
-    bot_msg = await message.reply_text(
-        auction_text,
-        parse_mode="Markdown",
+    bot_msg = await msg.reply_text(
+        auction_text(base, base, end),
+        parse_mode="Markdown"
     )
 
-    auctions[message.message_id] = {
-        "chat_id": message.chat_id,
-        "base_price": base_price,
-        "current_price": base_price,
-        "end_time": end_time,
-        "bot_message_id": bot_msg.message_id,
+    auctions[bot_msg.message_id] = {
+        "chat_id": msg.chat_id,
+        "base": base,
+        "current": base,
+        "end": end,
     }
 
-    logging.info(f"Asta creata - base {base_price}€")
-
+    logging.info(f"Asta creata base {base}")
 
 # ---------------- OFFERTE ----------------
 async def handle_bid(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    message = update.message
+    msg = update.message
 
-    if not message.reply_to_message:
+    if not msg.reply_to_message:
         return
 
-    auction = auctions.get(message.reply_to_message.message_id)
+    auction = auctions.get(msg.reply_to_message.message_id)
     if not auction:
         return
 
-    bid = parse_price(message.text)
+    bid = parse_price(msg.text or "")
     if bid is None:
         return
 
-    current = auction["current_price"]
-
-    if bid <= current:
-        await message.reply_text("❌ Offerta troppo bassa")
+    if bid <= auction["current"]:
+        await msg.reply_text("❌ Offerta troppo bassa")
         return
 
-    auction["current_price"] = bid
-
-    new_text = build_auction_text(
-        auction["base_price"],
-        auction["current_price"],
-        auction["end_time"],
-    )
+    auction["current"] = bid
 
     await context.bot.edit_message_text(
         chat_id=auction["chat_id"],
-        message_id=auction["bot_message_id"],
-        text=new_text,
-        parse_mode="Markdown",
+        message_id=msg.reply_to_message.message_id,
+        text=auction_text(
+            auction["base"],
+            auction["current"],
+            auction["end"]
+        ),
+        parse_mode="Markdown"
     )
 
-    logging.info(f"Nuova offerta valida: {bid}€")
-
+    logging.info(f"Nuova offerta: {bid}")
 
 # ---------------- MAIN ----------------
 def main():
@@ -155,16 +133,17 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("shop", shop))
 
-    app.add_handler(
-        MessageHandler(filters.TEXT & filters.ChatType.GROUPS, handle_sale)
-    )
-    app.add_handler(
-        MessageHandler(filters.TEXT & filters.REPLY & filters.ChatType.GROUPS, handle_bid)
-    )
+    app.add_handler(MessageHandler(
+        (filters.TEXT | filters.Caption) & filters.ChatType.GROUPS,
+        handle_sale
+    ))
 
-    logging.info("Bot avviato correttamente")
+    app.add_handler(MessageHandler(
+        filters.TEXT & filters.REPLY & filters.ChatType.GROUPS,
+        handle_bid
+    ))
+
     app.run_polling()
-
 
 if __name__ == "__main__":
     main()
