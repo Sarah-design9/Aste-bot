@@ -21,28 +21,28 @@ logging.basicConfig(level=logging.INFO)
 aste = {}
 next_id = 1
 
-# ================= UTILS =================
+# ================= RENDER =================
 def render_asta(a):
     stato = "🟢 ATTIVA" if a["attiva"] else "🔴 ASTA TERMINATA"
-    fine = a["fine"].strftime("%d/%m %H:%M") if a["fine"] else "⏳ In attesa di offerte"
+    fine = a["fine"].strftime("%d/%m %H:%M") if a["fine"] else "⏳ Parte alla prima offerta"
 
     testo = (
         f"📦 {a['titolo']}\n"
         f"💰 Base d’asta: {a['base']}€\n"
         f"🔥 Offerta attuale: {a['attuale']}€\n"
-        f"⏰ Fine: {fine}\n"
+        f"⏰ Fine asta: {fine}\n"
         f"{stato}"
     )
 
     if not a["attiva"]:
         testo += f"\n\n🏆 Vincitore: {a['vincitore']}\n💵 Prezzo finale: {a['attuale']}€"
     else:
-        testo += "\n\n👉 Rispondi a questo messaggio con un importo per offrire"
+        testo += "\n\n👉 Rispondi con un importo per offrire"
 
     return testo
 
 
-async def aggiorna_post(context: ContextTypes.DEFAULT_TYPE, asta):
+async def aggiorna_post(context, asta):
     try:
         await context.bot.edit_message_caption(
             chat_id=asta["chat_id"],
@@ -92,7 +92,6 @@ async def vendita(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "titolo": titolo,
         "base": base,
         "attuale": base,
-        "venditore": msg.from_user.id,
         "chat_id": msg.chat_id,
         "message_id": None,
         "attiva": True,
@@ -100,17 +99,13 @@ async def vendita(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "vincitore": None,
     }
 
-    try:
-        if msg.photo:
-            sent = await msg.reply_photo(
-                photo=msg.photo[-1].file_id,
-                caption=render_asta(asta)
-            )
-        else:
-            sent = await msg.reply_text(render_asta(asta))
-    except Exception as e:
-        logging.error(e)
-        return
+    if msg.photo:
+        sent = await msg.reply_photo(
+            photo=msg.photo[-1].file_id,
+            caption=render_asta(asta)
+        )
+    else:
+        sent = await msg.reply_text(render_asta(asta))
 
     asta["message_id"] = sent.message_id
     aste[next_id] = asta
@@ -125,6 +120,7 @@ async def offerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
     valore_raw = re.sub(r"[^\d]", "", msg.text)
     if not valore_raw.isdigit():
         return
+
     valore = int(valore_raw)
 
     asta = None
@@ -133,10 +129,14 @@ async def offerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
             asta = a
             break
 
-    if not asta or not asta["attiva"]:
+    if not asta:
         return
 
-    # prima offerta → parte il countdown
+    if not asta["attiva"]:
+        await msg.reply_text("🔴 Asta chiusa")
+        return
+
+    # Prima offerta → parte il timer
     if asta["fine"] is None:
         asta["fine"] = datetime.now() + timedelta(hours=DURATA_ASTA_ORE)
         context.job_queue.run_once(
@@ -145,16 +145,31 @@ async def offerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
             data=asta["id"]
         )
 
-    if valore < asta["base"]:
-        return
-
+    # Offerta più bassa
     if valore < asta["attuale"]:
+        await msg.reply_text(
+            f"❌ Offerta troppo bassa\n💰 Offerta attuale: {asta['attuale']}€"
+        )
         return
 
+    # Offerta uguale
+    if valore == asta["attuale"]:
+        await msg.reply_text(
+            f"⚠️ Offerta già presente\n💰 Prezzo attuale: {asta['attuale']}€"
+        )
+        return
+
+    # Offerta valida
     asta["attuale"] = valore
     asta["vincitore"] = msg.from_user.first_name
 
     await aggiorna_post(context, asta)
+
+    await msg.reply_text(
+        f"✅ Offerta accettata!\n"
+        f"💰 Nuovo prezzo: {asta['attuale']}€\n"
+        f"⏳ Fine asta: {asta['fine'].strftime('%d/%m %H:%M')}"
+    )
 
 # ================= SHOP =================
 async def shop(update: Update, context: ContextTypes.DEFAULT_TYPE):
