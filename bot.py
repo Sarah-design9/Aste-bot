@@ -15,6 +15,7 @@ from telegram.ext import (
 # ================= CONFIG =================
 TOKEN = os.getenv("BOT_TOKEN")
 DURATA_ASTA_ORE = 24
+CHECK_INTERVAL = 60  # secondi
 
 logging.basicConfig(level=logging.INFO)
 
@@ -56,16 +57,25 @@ async def aggiorna_post(context, asta):
             text=render_asta(asta)
         )
 
-# ================= CHIUSURA ASTA =================
-async def chiudi_asta(context: ContextTypes.DEFAULT_TYPE):
-    asta_id = context.job.data
-    asta = aste.get(asta_id)
+# ================= CONTROLLO ASTE =================
+async def controllo_aste(context: ContextTypes.DEFAULT_TYPE):
+    now = datetime.now()
 
-    if not asta or not asta["attiva"]:
-        return
+    for asta in aste.values():
+        if asta["attiva"] and asta["fine"] and now >= asta["fine"]:
+            asta["attiva"] = False
 
-    asta["attiva"] = False
-    await aggiorna_post(context, asta)
+            await aggiorna_post(context, asta)
+
+            await context.bot.send_message(
+                chat_id=asta["chat_id"],
+                text=(
+                    f"🔔 ASTA TERMINATA\n\n"
+                    f"📦 {asta['titolo']}\n"
+                    f"🏆 Vincitore: {asta['vincitore']}\n"
+                    f"💰 Prezzo finale: {asta['attuale']}€"
+                )
+            )
 
 # ================= VENDITA =================
 async def vendita(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -129,33 +139,17 @@ async def offerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
             asta = a
             break
 
-    if not asta:
-        return
-
-    if not asta["attiva"]:
-        await msg.reply_text("🔴 Asta chiusa")
+    if not asta or not asta["attiva"]:
         return
 
     # Prima offerta → parte il timer
     if asta["fine"] is None:
         asta["fine"] = datetime.now() + timedelta(hours=DURATA_ASTA_ORE)
-        context.job_queue.run_once(
-            chiudi_asta,
-            when=DURATA_ASTA_ORE * 3600,
-            data=asta["id"]
-        )
 
-    # Offerta più bassa
-    if valore < asta["attuale"]:
+    # Offerta più bassa o uguale
+    if valore <= asta["attuale"]:
         await msg.reply_text(
-            f"❌ Offerta troppo bassa\n💰 Offerta attuale: {asta['attuale']}€"
-        )
-        return
-
-    # Offerta uguale
-    if valore == asta["attuale"]:
-        await msg.reply_text(
-            f"⚠️ Offerta già presente\n💰 Prezzo attuale: {asta['attuale']}€"
+            f"❌ Offerta non valida\n💰 Offerta attuale: {asta['attuale']}€"
         )
         return
 
@@ -164,12 +158,6 @@ async def offerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
     asta["vincitore"] = msg.from_user.first_name
 
     await aggiorna_post(context, asta)
-
-    await msg.reply_text(
-        f"✅ Offerta accettata!\n"
-        f"💰 Nuovo prezzo: {asta['attuale']}€\n"
-        f"⏳ Fine asta: {asta['fine'].strftime('%d/%m %H:%M')}"
-    )
 
 # ================= SHOP =================
 async def shop(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -191,6 +179,8 @@ def main():
     app.add_handler(CommandHandler("shop", shop))
     app.add_handler(MessageHandler(filters.TEXT | filters.PHOTO, vendita))
     app.add_handler(MessageHandler(filters.TEXT & filters.REPLY, offerta))
+
+    app.job_queue.run_repeating(controllo_aste, interval=CHECK_INTERVAL, first=10)
 
     app.run_polling()
 
