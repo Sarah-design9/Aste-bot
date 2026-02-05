@@ -1,5 +1,6 @@
 import logging
 import re
+import os
 from datetime import datetime, timedelta
 
 from telegram import Update
@@ -21,9 +22,13 @@ aste = {}
 next_id = 1
 
 # ================= UTILS =================
+def estrai_importo(testo):
+    raw = re.sub(r"[^\d]", "", testo)
+    return int(raw) if raw.isdigit() else None
+
 def render_asta(a):
     stato = "🟢 ATTIVA" if a["attiva"] else "🔴 CHIUSA"
-    fine_text = (
+    fine = (
         a["fine"].strftime("%d/%m %H:%M")
         if a["fine"]
         else "⏳ In attesa della prima offerta"
@@ -33,14 +38,10 @@ def render_asta(a):
         f"📦 {a['titolo']}\n"
         f"💰 Base d’asta: {a['base']}€\n"
         f"🔥 Offerta attuale: {a['attuale']}€\n"
-        f"⏰ Fine: {fine_text}\n"
+        f"⏰ Fine: {fine}\n"
         f"{stato}\n\n"
         f"👉 Rispondi a questo messaggio con un importo"
     )
-
-def estrai_importo(testo):
-    raw = re.sub(r"[^\d]", "", testo)
-    return int(raw) if raw.isdigit() else None
 
 # ================= VENDITA =================
 async def vendita(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -103,27 +104,24 @@ async def offerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     asta = None
     for a in aste.values():
-        if a["message_id"] == msg.reply_to_message.message_id and a["attiva"]:
+        if a["attiva"] and a["message_id"] == msg.reply_to_message.message_id:
             asta = a
             break
     if not asta:
         return
 
-    # prima offerta -> parte l'asta
+    # prima offerta → parte il timer
     if asta["fine"] is None:
         asta["fine"] = datetime.now() + timedelta(hours=DURATA_ASTA_ORE)
 
-    # offerta troppo bassa
     if valore < asta["attuale"]:
         await msg.reply_text("❌ Offerta troppo bassa")
         return
 
-    # offerta uguale
     if valore == asta["attuale"]:
         await msg.reply_text("⚠️ Offerta uguale alla corrente")
         return
 
-    # offerta valida
     asta["attuale"] = valore
     asta["vincitore"] = msg.from_user
 
@@ -155,7 +153,7 @@ async def shop(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(testo)
 
-# ================= CHECK ASTE =================
+# ================= CHIUSURA AUTOMATICA =================
 async def check_aste(context: ContextTypes.DEFAULT_TYPE):
     now = datetime.now()
     for a in aste.values():
@@ -189,13 +187,18 @@ async def check_aste(context: ContextTypes.DEFAULT_TYPE):
 
 # ================= MAIN =================
 def main():
-    app = ApplicationBuilder().build()
+    app = ApplicationBuilder().token(os.getenv("BOT_TOKEN")).build()
 
     app.add_handler(CommandHandler("shop", shop))
 
-    # ORDINE CORRETTO (fondamentale)
+    # ORDINE FONDAMENTALE
     app.add_handler(MessageHandler(filters.REPLY & filters.TEXT, offerta))
-    app.add_handler(MessageHandler((filters.TEXT | filters.PHOTO) & ~filters.REPLY, vendita))
+    app.add_handler(
+        MessageHandler(
+            (filters.TEXT | filters.PHOTO) & ~filters.REPLY,
+            vendita
+        )
+    )
 
     app.job_queue.run_repeating(check_aste, interval=CHECK_INTERVAL, first=10)
 
