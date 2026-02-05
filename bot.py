@@ -14,7 +14,7 @@ from telegram.ext import (
 
 # ================= CONFIG =================
 DURATA_ASTA_ORE = 24
-CHECK_INTERVAL = 60  # secondi
+CHECK_INTERVAL = 60  # controllo ogni minuto
 
 logging.basicConfig(level=logging.INFO)
 
@@ -23,6 +23,8 @@ next_id = 1
 
 # ================= UTILS =================
 def estrai_importo(testo):
+    if not testo:
+        return None
     raw = re.sub(r"[^\d]", "", testo)
     return int(raw) if raw.isdigit() else None
 
@@ -43,15 +45,31 @@ def render_asta(a):
         f"👉 Rispondi a questo messaggio con un importo"
     )
 
+# ================= ROUTER =================
+async def router(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.message
+    if not msg:
+        return
+
+    # TESTO DEL MESSAGGIO
+    testo = msg.caption if msg.photo else msg.text
+
+    # OFFERTA: risposta a un messaggio
+    if msg.reply_to_message and msg.text:
+        await offerta(update, context)
+        return
+
+    # VENDITA
+    if testo and testo.lower().startswith("#vendita"):
+        await vendita(update, context)
+        return
+
 # ================= VENDITA =================
 async def vendita(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global next_id
     msg = update.message
 
     testo = msg.caption if msg.photo else msg.text
-    if not testo or not testo.lower().startswith("#vendita"):
-        return
-
     parti = testo.split()
     if len(parti) < 3:
         return
@@ -66,7 +84,6 @@ async def vendita(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "titolo": titolo,
         "base": base,
         "attuale": base,
-        "venditore": msg.from_user.id,
         "chat_id": msg.chat_id,
         "message_id": None,
         "attiva": True,
@@ -95,9 +112,6 @@ async def vendita(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ================= OFFERTE =================
 async def offerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
-    if not msg.reply_to_message or not msg.text:
-        return
-
     valore = estrai_importo(msg.text)
     if valore is None:
         return
@@ -107,10 +121,11 @@ async def offerta(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if a["attiva"] and a["message_id"] == msg.reply_to_message.message_id:
             asta = a
             break
+
     if not asta:
         return
 
-    # prima offerta → parte il timer
+    # Prima offerta → parte il timer
     if asta["fine"] is None:
         asta["fine"] = datetime.now() + timedelta(hours=DURATA_ASTA_ORE)
 
@@ -190,15 +205,7 @@ def main():
     app = ApplicationBuilder().token(os.getenv("BOT_TOKEN")).build()
 
     app.add_handler(CommandHandler("shop", shop))
-
-    # ORDINE FONDAMENTALE
-    app.add_handler(MessageHandler(filters.REPLY & filters.TEXT, offerta))
-    app.add_handler(
-        MessageHandler(
-            (filters.TEXT | filters.PHOTO) & ~filters.REPLY,
-            vendita
-        )
-    )
+    app.add_handler(MessageHandler(filters.TEXT | filters.PHOTO, router))
 
     app.job_queue.run_repeating(check_aste, interval=CHECK_INTERVAL, first=10)
 
