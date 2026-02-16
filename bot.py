@@ -10,14 +10,13 @@ from telegram.ext import (
     filters,
 )
 
-# ===== CONFIG =====
-DURATA_ASTA_ORE = 24
 logging.basicConfig(level=logging.INFO)
 
+DURATA_ASTA_ORE = 24
 aste = {}
 next_id = 1
 
-# ===== RENDER ASTA =====
+# ================= RENDER =================
 def render_asta(a):
     fine = "⏳ Parte alla prima offerta" if a["fine"] is None else a["fine"].strftime("%d/%m %H:%M")
     stato = "🟢 ATTIVA" if a["attiva"] else "🔴 CHIUSA"
@@ -31,7 +30,7 @@ def render_asta(a):
         f"👉 Rispondi a QUESTO messaggio con un importo"
     )
 
-# ===== CREAZIONE VENDITA =====
+# ================= VENDITA =================
 async def vendita(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global next_id
     msg = update.message
@@ -77,10 +76,14 @@ async def vendita(update: Update, context: ContextTypes.DEFAULT_TYPE):
     aste[next_id] = asta
     next_id += 1
 
-# ===== GESTIONE OFFERTE =====
-async def offerte(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ================= OFFERTE =================
+async def gestisci_messaggi(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
-    if not msg or not msg.text or not msg.reply_to_message:
+    if not msg or not msg.text:
+        return
+
+    # deve essere risposta a qualcosa
+    if not msg.reply_to_message:
         return
 
     valore_raw = re.sub(r"[^\d]", "", msg.text)
@@ -89,6 +92,7 @@ async def offerte(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     valore = int(valore_raw)
 
+    # cerca asta
     asta = None
     for a in aste.values():
         if (
@@ -138,7 +142,7 @@ async def offerte(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logging.error(e)
 
-# ===== SHOP =====
+# ================= SHOP =================
 async def shop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     attive = [a for a in aste.values() if a["attiva"]]
 
@@ -152,17 +156,18 @@ async def shop(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(testo)
 
-# ===== MAIN =====
+# ================= MAIN =================
 def main():
     import os
     TOKEN = os.environ["BOT_TOKEN"]
 
     app = ApplicationBuilder().token(TOKEN).build()
 
-    # ORDINE IMPORTANTISSIMO
     app.add_handler(CommandHandler("shop", shop))
-    app.add_handler(MessageHandler(filters.REPLY & filters.TEXT, offerte))
+
+    # intercettiamo TUTTI i messaggi
     app.add_handler(MessageHandler(filters.TEXT | filters.PHOTO, vendita))
+    app.add_handler(MessageHandler(filters.TEXT, gestisci_messaggi))
 
     app.run_polling()
 
