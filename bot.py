@@ -10,16 +10,18 @@ from telegram.ext import (
     filters,
 )
 
+# ===== CONFIG =====
+DURATA_ASTA_ORE = 24
 logging.basicConfig(level=logging.INFO)
 
-DURATA_ASTA_ORE = 24
 aste = {}
 next_id = 1
 
-# ================= UTIL =================
-def render(a):
+# ===== RENDER ASTA =====
+def render_asta(a):
     fine = "⏳ Parte alla prima offerta" if a["fine"] is None else a["fine"].strftime("%d/%m %H:%M")
     stato = "🟢 ATTIVA" if a["attiva"] else "🔴 CHIUSA"
+
     return (
         f"📦 {a['titolo']}\n"
         f"💰 Base d’asta: {a['base']}€\n"
@@ -29,7 +31,7 @@ def render(a):
         f"👉 Rispondi a QUESTO messaggio con un importo"
     )
 
-# ================= VENDITA =================
+# ===== CREAZIONE VENDITA =====
 async def vendita(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global next_id
     msg = update.message
@@ -61,10 +63,13 @@ async def vendita(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "foto": bool(msg.photo),
     }
 
-    testo_asta = render(asta)
+    testo_asta = render_asta(asta)
 
     if msg.photo:
-        sent = await msg.reply_photo(msg.photo[-1].file_id, caption=testo_asta)
+        sent = await msg.reply_photo(
+            photo=msg.photo[-1].file_id,
+            caption=testo_asta
+        )
     else:
         sent = await msg.reply_text(testo_asta)
 
@@ -72,7 +77,7 @@ async def vendita(update: Update, context: ContextTypes.DEFAULT_TYPE):
     aste[next_id] = asta
     next_id += 1
 
-# ================= OFFERTE =================
+# ===== GESTIONE OFFERTE =====
 async def offerte(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
     if not msg or not msg.text or not msg.reply_to_message:
@@ -97,38 +102,46 @@ async def offerte(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not asta:
         return
 
+    # ===== PRIMA OFFERTA =====
     if asta["fine"] is None:
         if valore < asta["base"]:
             await msg.reply_text("❌ Offerta troppo bassa")
             return
+
+        asta["attuale"] = valore
         asta["fine"] = datetime.now() + timedelta(hours=DURATA_ASTA_ORE)
 
-    if valore <= asta["attuale"]:
-        await msg.reply_text("❌ Offerta troppo bassa")
-        return
+    # ===== OFFERTE SUCCESSIVE =====
+    else:
+        if valore <= asta["attuale"]:
+            await msg.reply_text("❌ Offerta troppo bassa")
+            return
 
-    asta["attuale"] = valore
+        asta["attuale"] = valore
 
-    testo = render(asta)
+    # ===== AGGIORNA POST =====
+    testo_aggiornato = render_asta(asta)
+
     try:
         if asta["foto"]:
             await context.bot.edit_message_caption(
                 chat_id=asta["chat_id"],
                 message_id=asta["message_id"],
-                caption=testo
+                caption=testo_aggiornato
             )
         else:
             await context.bot.edit_message_text(
                 chat_id=asta["chat_id"],
                 message_id=asta["message_id"],
-                text=testo
+                text=testo_aggiornato
             )
     except Exception as e:
         logging.error(e)
 
-# ================= SHOP =================
+# ===== SHOP =====
 async def shop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     attive = [a for a in aste.values() if a["attiva"]]
+
     if not attive:
         await update.message.reply_text("❌ Nessuna asta disponibile")
         return
@@ -139,14 +152,14 @@ async def shop(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(testo)
 
-# ================= MAIN =================
+# ===== MAIN =====
 def main():
     import os
     TOKEN = os.environ["BOT_TOKEN"]
 
     app = ApplicationBuilder().token(TOKEN).build()
 
-    # ⚠️ ORDINE CORRETTO
+    # ORDINE IMPORTANTISSIMO
     app.add_handler(CommandHandler("shop", shop))
     app.add_handler(MessageHandler(filters.REPLY & filters.TEXT, offerte))
     app.add_handler(MessageHandler(filters.TEXT | filters.PHOTO, vendita))
