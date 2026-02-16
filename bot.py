@@ -30,60 +30,57 @@ def render_asta(a):
         f"👉 Rispondi a QUESTO messaggio con un importo"
     )
 
-# ================= VENDITA =================
-async def vendita(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ================= GESTIONE MESSAGGI =================
+async def gestisci_messaggi(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global next_id
     msg = update.message
 
+    if not msg:
+        return
+
+    # ================= VENDITA =================
     testo = msg.caption if msg.photo else msg.text
-    if not testo or not testo.lower().startswith("#vendita"):
+    if testo and testo.lower().startswith("#vendita"):
+        parti = testo.split()
+        if len(parti) < 3:
+            return
+
+        titolo = " ".join(parti[1:-1])
+        base_raw = re.sub(r"[^\d]", "", parti[-1])
+        if not base_raw.isdigit():
+            return
+
+        base = int(base_raw)
+
+        asta = {
+            "id": next_id,
+            "titolo": titolo,
+            "base": base,
+            "attuale": base,
+            "chat_id": msg.chat_id,
+            "message_id": None,
+            "attiva": True,
+            "fine": None,
+            "foto": bool(msg.photo),
+        }
+
+        testo_asta = render_asta(asta)
+
+        if msg.photo:
+            sent = await msg.reply_photo(
+                photo=msg.photo[-1].file_id,
+                caption=testo_asta
+            )
+        else:
+            sent = await msg.reply_text(testo_asta)
+
+        asta["message_id"] = sent.message_id
+        aste[next_id] = asta
+        next_id += 1
         return
 
-    parti = testo.split()
-    if len(parti) < 3:
-        return
-
-    titolo = " ".join(parti[1:-1])
-    base_raw = re.sub(r"[^\d]", "", parti[-1])
-    if not base_raw.isdigit():
-        return
-
-    base = int(base_raw)
-
-    asta = {
-        "id": next_id,
-        "titolo": titolo,
-        "base": base,
-        "attuale": base,
-        "chat_id": msg.chat_id,
-        "message_id": None,
-        "attiva": True,
-        "fine": None,
-        "foto": bool(msg.photo),
-    }
-
-    testo_asta = render_asta(asta)
-
-    if msg.photo:
-        sent = await msg.reply_photo(
-            photo=msg.photo[-1].file_id,
-            caption=testo_asta
-        )
-    else:
-        sent = await msg.reply_text(testo_asta)
-
-    asta["message_id"] = sent.message_id
-    aste[next_id] = asta
-    next_id += 1
-
-# ================= OFFERTE =================
-async def gestisci_messaggi(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = update.message
-    if not msg or not msg.text:
-        return
-
-    # deve essere risposta a qualcosa
-    if not msg.reply_to_message:
+    # ================= OFFERTE =================
+    if not msg.text or not msg.reply_to_message:
         return
 
     valore_raw = re.sub(r"[^\d]", "", msg.text)
@@ -92,7 +89,6 @@ async def gestisci_messaggi(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     valore = int(valore_raw)
 
-    # cerca asta
     asta = None
     for a in aste.values():
         if (
@@ -106,7 +102,7 @@ async def gestisci_messaggi(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not asta:
         return
 
-    # ===== PRIMA OFFERTA =====
+    # PRIMA OFFERTA
     if asta["fine"] is None:
         if valore < asta["base"]:
             await msg.reply_text("❌ Offerta troppo bassa")
@@ -115,7 +111,7 @@ async def gestisci_messaggi(update: Update, context: ContextTypes.DEFAULT_TYPE):
         asta["attuale"] = valore
         asta["fine"] = datetime.now() + timedelta(hours=DURATA_ASTA_ORE)
 
-    # ===== OFFERTE SUCCESSIVE =====
+    # OFFERTE SUCCESSIVE
     else:
         if valore <= asta["attuale"]:
             await msg.reply_text("❌ Offerta troppo bassa")
@@ -123,7 +119,7 @@ async def gestisci_messaggi(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         asta["attuale"] = valore
 
-    # ===== AGGIORNA POST =====
+    # AGGIORNA POST
     testo_aggiornato = render_asta(asta)
 
     try:
@@ -164,10 +160,7 @@ def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("shop", shop))
-
-    # intercettiamo TUTTI i messaggi
-    app.add_handler(MessageHandler(filters.TEXT | filters.PHOTO, vendita))
-    app.add_handler(MessageHandler(filters.TEXT, gestisci_messaggi))
+    app.add_handler(MessageHandler(filters.TEXT | filters.PHOTO, gestisci_messaggi))
 
     app.run_polling()
 
