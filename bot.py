@@ -30,15 +30,48 @@ def render_asta(a):
         f"👉 Rispondi a QUESTO messaggio con un importo"
     )
 
+# ================= CHIUSURA ASTA =================
+async def chiudi_asta(context: ContextTypes.DEFAULT_TYPE):
+    asta_id = context.job.data
+    asta = aste.get(asta_id)
+
+    if not asta or not asta["attiva"]:
+        return
+
+    asta["attiva"] = False
+
+    testo_finale = render_asta(asta) + "\n\n🏆 ASTA CHIUSA!"
+
+    try:
+        if asta["foto"]:
+            await context.bot.edit_message_caption(
+                chat_id=asta["chat_id"],
+                message_id=asta["message_id"],
+                caption=testo_finale
+            )
+        else:
+            await context.bot.edit_message_text(
+                chat_id=asta["chat_id"],
+                message_id=asta["message_id"],
+                text=testo_finale
+            )
+
+        await context.bot.send_message(
+            chat_id=asta["chat_id"],
+            text=f"🏆 Asta chiusa! Vince con {asta['attuale']}€"
+        )
+
+    except Exception as e:
+        logging.error(e)
+
 # ================= GESTIONE MESSAGGI =================
 async def gestisci_messaggi(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global next_id
     msg = update.message
-
     if not msg:
         return
 
-    # ================= VENDITA =================
+    # ===== VENDITA =====
     testo = msg.caption if msg.photo else msg.text
     if testo and testo.lower().startswith("#vendita"):
         parti = testo.split()
@@ -67,10 +100,7 @@ async def gestisci_messaggi(update: Update, context: ContextTypes.DEFAULT_TYPE):
         testo_asta = render_asta(asta)
 
         if msg.photo:
-            sent = await msg.reply_photo(
-                photo=msg.photo[-1].file_id,
-                caption=testo_asta
-            )
+            sent = await msg.reply_photo(msg.photo[-1].file_id, caption=testo_asta)
         else:
             sent = await msg.reply_text(testo_asta)
 
@@ -79,7 +109,7 @@ async def gestisci_messaggi(update: Update, context: ContextTypes.DEFAULT_TYPE):
         next_id += 1
         return
 
-    # ================= OFFERTE =================
+    # ===== OFFERTE =====
     if not msg.text or not msg.reply_to_message:
         return
 
@@ -110,6 +140,13 @@ async def gestisci_messaggi(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         asta["attuale"] = valore
         asta["fine"] = datetime.now() + timedelta(hours=DURATA_ASTA_ORE)
+
+        # PROGRAMMA CHIUSURA
+        context.job_queue.run_once(
+            chiudi_asta,
+            when=DURATA_ASTA_ORE * 3600,
+            data=asta["id"]
+        )
 
     # OFFERTE SUCCESSIVE
     else:
