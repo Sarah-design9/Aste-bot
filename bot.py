@@ -35,7 +35,7 @@ async def gestisci_messaggi(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.photo:
         testo = update.message.caption
 
-        if testo and testo.lower().startswith("vendita"):
+        if testo and "vendita" in testo.lower():
             parti = testo.split("\n")
 
             try:
