@@ -4,7 +4,7 @@ import asyncio
 from telegram import Update, InputMediaPhoto
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 
-TOKEN = "METTI_QUI_IL_TUO_TOKEN"
+TOKEN = "7998174738:AAHChHqy0hicxVPr5kWZ5xf61T-akl1bCYw"
 
 aste = {}
 next_id = 1
