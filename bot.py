@@ -1,39 +1,56 @@
 import os
 import re
-import logging
 from telegram import Update
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
-
-logging.basicConfig(level=logging.INFO)
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    MessageHandler,
+    ContextTypes,
+    filters,
+)
 
 TOKEN = os.getenv("TOKEN")
 
 aste = {}
+contatore_id = 1
 
-# ------------------------
+
+# =========================
 # /start
-# ------------------------
-def start(update: Update, context: CallbackContext):
-    update.message.reply_text("Ciao! Per mettere in vendita scrivi un post con FOTO e nel testo metti 'Vendita' e il prezzo.")
+# =========================
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "Ciao! Per mettere in vendita un oggetto scrivi un post con FOTO e nel testo metti:\n\n"
+        "Vendita nomeoggetto\n"
+        "Base d'asta: 10€"
+    )
 
-# ------------------------
+
+# =========================
 # /shop
-# ------------------------
-def shop(update: Update, context: CallbackContext):
+# =========================
+async def shop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not aste:
-        update.message.reply_text("Non ci sono aste attive.")
+        await update.message.reply_text("Non ci sono aste attive.")
         return
 
-    messaggio = "🛒 Aste attive:\n\n"
+    testo = "📦 Aste attive:\n\n"
     for id_asta, dati in aste.items():
-        messaggio += f"ID {id_asta} - {dati['titolo']} - Offerta attuale: {dati['prezzo']}€\n"
+        testo += (
+            f"ID: {id_asta}\n"
+            f"Oggetto: {dati['titolo']}\n"
+            f"Prezzo attuale: {dati['prezzo']}€\n\n"
+        )
 
-    update.message.reply_text(messaggio)
+    await update.message.reply_text(testo)
 
-# ------------------------
-# CREAZIONE ASTA (parser intelligente)
-# ------------------------
-def nuova_vendita(update: Update, context: CallbackContext):
+
+# =========================
+# NUOVA ASTA (parser intelligente)
+# =========================
+async def nuova_asta(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global contatore_id
+
     if not update.message.photo:
         return
 
@@ -41,93 +58,89 @@ def nuova_vendita(update: Update, context: CallbackContext):
     if not testo:
         return
 
-    if "vendita" not in testo.lower():
+    testo_lower = testo.lower()
+
+    if "vendita" not in testo_lower:
         return
 
-    # Trova primo numero nel testo (prezzo base)
-    match = re.search(r"\d+", testo.replace(".", ""))
+    # Trova prezzo con regex (prende qualsiasi numero con o senza €)
+    match = re.search(r"(\d+)\s*€?", testo)
     if not match:
-        update.message.reply_text("Non trovo il prezzo base.")
+        await update.message.reply_text("Non trovo il prezzo base.")
         return
 
-    prezzo_base = float(match.group())
+    prezzo_base = float(match.group(1))
 
-    # Titolo = prima riga senza la parola vendita
-    prima_riga = testo.split("\n")[0]
-    titolo = prima_riga.lower().replace("vendita", "").replace(":", "").strip()
-    if titolo == "":
-        titolo = "Articolo"
+    # Titolo = riga che contiene vendita
+    righe = testo.split("\n")
+    titolo = ""
+    for r in righe:
+        if "vendita" in r.lower():
+            titolo = r.lower().replace("vendita", "").strip()
+            break
 
-    id_asta = len(aste) + 1
+    if not titolo:
+        titolo = "Oggetto"
 
-    aste[id_asta] = {
+    aste[contatore_id] = {
         "titolo": titolo,
         "prezzo": prezzo_base,
-        "chat_id": update.message.chat_id,
-        "message_id": update.message.message_id
+        "gruppo": update.effective_chat.id,
     }
 
-    nuovo_testo = f"🔥 ASTA ATTIVA 🔥\n\n📦 {titolo}\n💰 Offerta attuale: {prezzo_base}€"
-
-    context.bot.edit_message_caption(
-        chat_id=update.message.chat_id,
-        message_id=update.message.message_id,
-        caption=nuovo_testo
+    await update.message.reply_text(
+        f"✅ Asta creata!\n\nID: {contatore_id}\n"
+        f"Oggetto: {titolo}\n"
+        f"Base d'asta: {prezzo_base}€"
     )
 
-# ------------------------
-# GESTIONE OFFERTE
-# ------------------------
-def offerta(update: Update, context: CallbackContext):
-    if not update.message.reply_to_message:
+    contatore_id += 1
+
+
+# =========================
+# OFFERTE
+# =========================
+async def offerte(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message.text:
         return
 
     testo = update.message.text
-    if not testo:
-        return
 
-    match = re.search(r"\d+", testo.replace(".", ""))
+    match = re.search(r"(\d+)\s*€?", testo)
     if not match:
         return
 
-    offerta_valore = float(match.group())
+    offerta = float(match.group(1))
 
-    msg_id = update.message.reply_to_message.message_id
+    if not aste:
+        return
 
-    for id_asta, dati in aste.items():
-        if dati["message_id"] == msg_id:
+    # prende ultima asta
+    ultimo_id = list(aste.keys())[-1]
+    asta = aste[ultimo_id]
 
-            # ORA ACCETTA >=
-            if offerta_valore >= dati["prezzo"]:
-                dati["prezzo"] = offerta_valore
+    if offerta >= asta["prezzo"]:
+        asta["prezzo"] = offerta
+        await update.message.reply_text(
+            f"🔥 Nuova offerta valida: {offerta}€"
+        )
 
-                nuovo_testo = f"🔥 ASTA ATTIVA 🔥\n\n📦 {dati['titolo']}\n💰 Offerta attuale: {offerta_valore}€"
 
-                context.bot.edit_message_caption(
-                    chat_id=dati["chat_id"],
-                    message_id=dati["message_id"],
-                    caption=nuovo_testo
-                )
-            else:
-                update.message.reply_text("Offerta troppo bassa.")
-
-            break
-
-# ------------------------
+# =========================
 # MAIN
-# ------------------------
+# =========================
 def main():
-    updater = Updater(TOKEN)
-    dp = updater.dispatcher
+    app = ApplicationBuilder().token(TOKEN).build()
 
-    dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(CommandHandler("shop", shop))
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("shop", shop))
 
-    dp.add_handler(MessageHandler(Filters.photo & Filters.caption, nuova_vendita))
-    dp.add_handler(MessageHandler(Filters.reply & Filters.text, offerta))
+    app.add_handler(MessageHandler(filters.PHOTO, nuova_asta))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, offerte))
 
-    updater.start_polling()
-    updater.idle()
+    print("Bot avviato...")
+    app.run_polling()
+
 
 if __name__ == "__main__":
     main()
