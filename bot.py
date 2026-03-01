@@ -1,142 +1,172 @@
 import os
 import re
+import logging
+from datetime import datetime, timedelta
+
 from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
+    ContextTypes,
     CommandHandler,
     MessageHandler,
-    ContextTypes,
     filters,
 )
 
-TOKEN = os.getenv("TOKEN")
+logging.basicConfig(level=logging.INFO)
 
-aste = {}
-contatore_id = 1
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+
+aste = {}  # message_id -> dati asta
 
 
-# =========================
-# /start
-# =========================
+# ------------------------
+# START
+# ------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "Ciao! Per mettere in vendita un oggetto scrivi un post con FOTO e nel testo metti:\n\n"
-        "Vendita nomeoggetto\n"
-        "Base d'asta: 10€"
+        "Ciao! Per mettere in vendita scrivi:\n\n"
+        "#vendita\n"
+        "Titolo oggetto\n"
+        "Base 10"
     )
 
 
-# =========================
-# /shop
-# =========================
+# ------------------------
+# SHOP
+# ------------------------
 async def shop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not aste:
         await update.message.reply_text("Non ci sono aste attive.")
         return
 
-    testo = "📦 Aste attive:\n\n"
-    for id_asta, dati in aste.items():
+    testo = "Aste attive:\n\n"
+    for asta in aste.values():
         testo += (
-            f"ID: {id_asta}\n"
-            f"Oggetto: {dati['titolo']}\n"
-            f"Prezzo attuale: {dati['prezzo']}€\n\n"
+            f"{asta['titolo']}\n"
+            f"Prezzo attuale: {asta['prezzo']}€\n\n"
         )
 
     await update.message.reply_text(testo)
 
 
-# =========================
-# NUOVA ASTA (parser intelligente)
-# =========================
-async def nuova_asta(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global contatore_id
+# ------------------------
+# NUOVA VENDITA
+# ------------------------
+async def nuova_vendita(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    message = update.message
 
-    if not update.message.photo:
-        return
-
-    testo = update.message.caption
+    testo = message.text if message.text else message.caption
     if not testo:
         return
 
-    testo_lower = testo.lower()
-
-    if "vendita" not in testo_lower:
+    if not testo.lower().startswith("#vendita"):
         return
 
-    # Trova prezzo con regex (prende qualsiasi numero con o senza €)
-    match = re.search(r"(\d+)\s*€?", testo)
-    if not match:
-        await update.message.reply_text("Non trovo il prezzo base.")
-        return
-
-    prezzo_base = float(match.group(1))
-
-    # Titolo = riga che contiene vendita
     righe = testo.split("\n")
-    titolo = ""
-    for r in righe:
-        if "vendita" in r.lower():
-            titolo = r.lower().replace("vendita", "").strip()
-            break
+    if len(righe) < 3:
+        return
 
-    if not titolo:
-        titolo = "Oggetto"
+    titolo = righe[1].strip()
 
-    aste[contatore_id] = {
+    base_match = re.search(r"base\s*(\d+)", testo.lower())
+    if not base_match:
+        return
+
+    base = int(base_match.group(1))
+
+    aste[message.message_id] = {
         "titolo": titolo,
-        "prezzo": prezzo_base,
-        "gruppo": update.effective_chat.id,
+        "prezzo": base,
+        "base": base,
+        "attiva": True,
+        "scadenza": None,
     }
 
-    await update.message.reply_text(
-        f"✅ Asta creata!\n\nID: {contatore_id}\n"
-        f"Oggetto: {titolo}\n"
-        f"Base d'asta: {prezzo_base}€"
+    await message.reply_text(
+        f"Asta creata!\n\n"
+        f"{titolo}\n"
+        f"Base d'asta: {base}€"
     )
 
-    contatore_id += 1
 
-
-# =========================
+# ------------------------
 # OFFERTE
-# =========================
+# ------------------------
 async def offerte(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message.text:
+    message = update.message
+
+    if not message.reply_to_message:
         return
 
-    testo = update.message.text
+    asta_id = message.reply_to_message.message_id
 
-    match = re.search(r"(\d+)\s*€?", testo)
+    if asta_id not in aste:
+        return
+
+    asta = aste[asta_id]
+
+    if not asta["attiva"]:
+        return
+
+    testo = message.text.strip()
+
+    match = re.match(r"(\d+)", testo)
     if not match:
         return
 
-    offerta = float(match.group(1))
+    offerta = int(match.group(1))
 
-    if not aste:
+    prezzo_attuale = asta["prezzo"]
+
+    # OFFERTA TROPPO BASSA
+    if offerta < prezzo_attuale:
+        await message.reply_text(
+            f"Offerta troppo bassa. Prezzo attuale: {prezzo_attuale}€"
+        )
         return
 
-    # prende ultima asta
-    ultimo_id = list(aste.keys())[-1]
-    asta = aste[ultimo_id]
-
-    if offerta >= asta["prezzo"]:
-        asta["prezzo"] = offerta
-        await update.message.reply_text(
-            f"🔥 Nuova offerta valida: {offerta}€"
+    # OFFERTA UGUALE
+    if offerta == prezzo_attuale and prezzo_attuale != asta["base"]:
+        await message.reply_text(
+            f"Offerta troppo bassa. Prezzo attuale: {prezzo_attuale}€"
         )
+        return
+
+    # OFFERTA VALIDA
+    asta["prezzo"] = offerta
+
+    # Se è la prima offerta (uguale alla base)
+    if asta["scadenza"] is None:
+        asta["scadenza"] = datetime.now() + timedelta(hours=24)
+
+    await message.reply_text(
+        f"Nuova offerta valida!\n"
+        f"Prezzo attuale: {offerta}€"
+    )
 
 
-# =========================
+# ------------------------
 # MAIN
-# =========================
+# ------------------------
 def main():
-    app = ApplicationBuilder().token(TOKEN).build()
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("shop", shop))
 
-    app.add_handler(MessageHandler(filters.PHOTO, nuova_asta))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, offerte))
+    app.add_handler(
+        MessageHandler(
+            filters.TEXT | filters.PHOTO,
+            nuova_vendita
+        )
+    )
+
+    app.add_handler(
+        MessageHandler(
+            filters.TEXT & filters.REPLY,
+            offerte
+        )
+    )
 
     print("Bot avviato...")
     app.run_polling()
